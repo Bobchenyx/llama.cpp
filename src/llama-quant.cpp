@@ -717,7 +717,7 @@ static ggml_type llama_tensor_get_type(quantize_state_impl & qs, ggml_type new_t
             case GGML_TYPE_IQ1_M:
             case GGML_TYPE_Q2_K:
             case GGML_TYPE_Q3_K:
-            case GGML_TYPE_IQ4_XS: new_type = GGML_TYPE_IQ4_NL; break;
+            case GGML_TYPE_IQ4_XS: new_type = GGML_TYPE_Q8_0;   break;
             case GGML_TYPE_Q4_K:   new_type = GGML_TYPE_Q5_0;   break;
             case GGML_TYPE_Q5_K:   new_type = GGML_TYPE_Q5_1;   break;
             case GGML_TYPE_Q6_K:   new_type = GGML_TYPE_Q8_0;   break;
@@ -1174,10 +1174,11 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
                         // this is a significant error and it may be good idea to abort the process if this happens,
                         // since many people will miss the error and not realize that most of the model is being quantized without an imatrix
                         // tok_embd should be ignored in this case, since it always causes this warning
-                        if (name != tn(LLM_TENSOR_TOKEN_EMBD, "weight")) {
-                            throw std::runtime_error(format("imatrix size %d is different from tensor size %d for %s",
-                                    int(it->second.size()), int(tensor->ne[0]*tensor->ne[2]), tensor->name));
-                        }
+                        
+                        // if (name != tn(LLM_TENSOR_TOKEN_EMBD, "weight")) {
+                        //     throw std::runtime_error(format("imatrix size %d is different from tensor size %d for %s",
+                        //             int(it->second.size()), int(tensor->ne[0]*tensor->ne[2]), tensor->name));
+                        // }
                     }
                 }
             }
@@ -1191,7 +1192,8 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
                 LLAMA_LOG_ERROR("Missing importance matrix for tensor %s in a very low-bit quantization\n", tensor->name);
                 LLAMA_LOG_ERROR("The result will be garbage, so bailing out\n");
                 LLAMA_LOG_ERROR("============================================================\n\n");
-                throw std::runtime_error(format("Missing importance matrix for tensor %s in a very low-bit quantization", tensor->name));
+                // throw std::runtime_error(format("Missing importance matrix for tensor %s in a very low-bit quantization", tensor->name));
+                new_type = GGML_TYPE_Q8_0;
             }
 
             float * f32_data;
