@@ -17,6 +17,7 @@ LLM inference in C/C++
 
 ## Hot topics
 
+- Support for the `gpt-oss` model with native MXFP4 format has been added | [PR](https://github.com/ggml-org/llama.cpp/pull/15091) | [Collaboration with NVIDIA](https://blogs.nvidia.com/blog/rtx-ai-garage-openai-oss) | [Comment](https://github.com/ggml-org/llama.cpp/discussions/15095)
 - Hot PRs: [All](https://github.com/ggml-org/llama.cpp/pulls?q=is%3Apr+label%3Ahot+) | [Open](https://github.com/ggml-org/llama.cpp/pulls?q=is%3Apr+label%3Ahot+is%3Aopen)
 - Multimodal support arrived in `llama-server`: [#12898](https://github.com/ggml-org/llama.cpp/pull/12898) | [documentation](./docs/multimodal.md)
 - VS Code extension for FIM completions: https://github.com/ggml-org/llama.vscode
@@ -270,7 +271,6 @@ Instructions for adding support for new models: [HOWTO-add-model.md](docs/develo
 | [CANN](docs/build.md#cann) | Ascend NPU |
 | [OpenCL](docs/backend/OPENCL.md) | Adreno GPU |
 | [WebGPU [In Progress]](docs/build.md#webgpu) | All |
-
 | [RPC](https://github.com/ggml-org/llama.cpp/tree/master/tools/rpc) | All |
 
 ## Obtaining and quantizing models
