@@ -7,6 +7,8 @@
 
 #include <Metal/Metal.h>
 
+#include <stdatomic.h>
+
 #ifndef TARGET_OS_VISION
 #define TARGET_OS_VISION 0
 #endif
@@ -21,6 +23,9 @@
 
 // overload of MTLGPUFamilyMetal3 (not available in some environments)
 static const NSInteger MTLGPUFamilyMetal3_GGML = 5001;
+
+// virtual address for GPU memory allocations
+static atomic_uintptr_t g_addr_device = 0x000000400ULL;
 
 #if !GGML_METAL_EMBED_LIBRARY
 // Here to assist with NSBundle Path Hack
@@ -49,6 +54,10 @@ ggml_metal_cv_t ggml_metal_cv_init(void) {
 void ggml_metal_cv_free(ggml_metal_cv_t cv) {
     [cv->obj release];
     free(cv);
+}
+
+void ggml_metal_cv_set_int16(ggml_metal_cv_t cv, int16_t value, int32_t idx) {
+    [cv->obj setConstantValue:&value type:MTLDataTypeShort atIndex:idx];
 }
 
 void ggml_metal_cv_set_int32(ggml_metal_cv_t cv, int32_t value, int32_t idx) {
@@ -327,12 +336,19 @@ ggml_metal_pipeline_t ggml_metal_library_compile_pipeline(ggml_metal_library_t l
 
         GGML_LOG_DEBUG("%s: compiling pipeline: base = '%s', name = '%s'\n", __func__, base, name);
 
-        id<MTLFunction> mtl_function = [lib->obj newFunctionWithName:base_func constantValues:(cv ? cv->obj : nil) error:&error];
+        id<MTLFunction> mtl_function;
+        if (!cv) {
+            mtl_function = [lib->obj newFunctionWithName:base_func];
+        } else {
+            mtl_function = [lib->obj newFunctionWithName:base_func constantValues:cv->obj error:&error];
+        }
         if (!mtl_function) {
             ggml_critical_section_end();
 
             GGML_LOG_ERROR("%s: error: failed to compile pipeline: base = '%s', name = '%s'\n", __func__, base, name);
-            GGML_LOG_ERROR("%s: error: %s\n", __func__, [[error description] UTF8String]);
+            if (error) {
+                GGML_LOG_ERROR("%s: error: %s\n", __func__, [[error description] UTF8String]);
+            }
 
             return nil;
         }
@@ -637,6 +653,11 @@ bool ggml_metal_device_supports_op(ggml_metal_device_t dev, const struct ggml_te
         case GGML_OP_SCALE:
         case GGML_OP_CONV_TRANSPOSE_1D:
             return true;
+        case GGML_OP_CONV_TRANSPOSE_2D:
+            return ggml_is_contiguous(op->src[0]) && ggml_is_contiguous(op->src[1]) &&
+                (op->src[0]->type == GGML_TYPE_F16 || op->src[0]->type == GGML_TYPE_F32) &&
+                op->src[1]->type == GGML_TYPE_F32 &&
+                op->type == GGML_TYPE_F32;
         case GGML_OP_CLAMP:
             return op->src[0]->type == GGML_TYPE_F32;
         case GGML_OP_SQR:
@@ -645,18 +666,20 @@ bool ggml_metal_device_supports_op(ggml_metal_device_t dev, const struct ggml_te
         case GGML_OP_COS:
         case GGML_OP_LOG:
             return ggml_is_contiguous(op->src[0]) && op->src[0]->type == GGML_TYPE_F32;
+        case GGML_OP_SUM:
+            return has_simdgroup_reduction && ggml_is_contiguous(op->src[0]);
         case GGML_OP_SUM_ROWS:
         case GGML_OP_MEAN:
         case GGML_OP_SOFT_MAX:
         case GGML_OP_GROUP_NORM:
             return has_simdgroup_reduction && ggml_is_contiguous_rows(op->src[0]);
-        case GGML_OP_RMS_NORM:
         case GGML_OP_L2_NORM:
             return has_simdgroup_reduction && (op->ne[0] % 4 == 0 && ggml_is_contiguous_1(op->src[0]));
         case GGML_OP_ARGMAX:
             return has_simdgroup_reduction;
         case GGML_OP_NORM:
-            return has_simdgroup_reduction && (op->ne[0] % 4 == 0 && ggml_is_contiguous_1(op->src[0]));
+        case GGML_OP_RMS_NORM:
+            return has_simdgroup_reduction && (ggml_is_contiguous_rows(op->src[0]));
         case GGML_OP_ROPE:
             return true;
         case GGML_OP_IM2COL:
@@ -672,15 +695,19 @@ bool ggml_metal_device_supports_op(ggml_metal_device_t dev, const struct ggml_te
                    (ggml_get_op_params_i32(op, 4) == 0) && (ggml_get_op_params_i32(op, 6) == 0);
         case GGML_OP_PAD_REFLECT_1D:
         case GGML_OP_TIMESTEP_EMBEDDING:
-        case GGML_OP_ARGSORT:
         case GGML_OP_LEAKY_RELU:
             return op->src[0]->type == GGML_TYPE_F32;
+        case GGML_OP_ARGSORT:
+            // TODO: Support arbitrary column width
+            return op->src[0]->ne[0] <= 1024;
         case GGML_OP_ARANGE:
             return true;
         case GGML_OP_FLASH_ATTN_EXT:
             // for new head sizes, add checks here
-            if (op->src[0]->ne[0] != 40 &&
+            if (op->src[0]->ne[0] != 32 &&
+                op->src[0]->ne[0] != 40 &&
                 op->src[0]->ne[0] != 64 &&
+                op->src[0]->ne[0] != 72 &&
                 op->src[0]->ne[0] != 80 &&
                 op->src[0]->ne[0] != 96 &&
                 op->src[0]->ne[0] != 112 &&
@@ -706,8 +733,7 @@ bool ggml_metal_device_supports_op(ggml_metal_device_t dev, const struct ggml_te
             return true;
         case GGML_OP_MUL_MAT:
         case GGML_OP_MUL_MAT_ID:
-            return has_simdgroup_reduction &&
-                (op->src[0]->type != GGML_TYPE_F32 || op->src[1]->type == GGML_TYPE_F32);
+            return has_simdgroup_reduction;
         case GGML_OP_CPY:
         case GGML_OP_DUP:
         case GGML_OP_CONT:
@@ -764,9 +790,7 @@ bool ggml_metal_device_supports_op(ggml_metal_device_t dev, const struct ggml_te
                 };
             }
         case GGML_OP_GET_ROWS:
-            {
-                return op->ne[3] == 1;
-            }
+            return true;
         case GGML_OP_SET_ROWS:
             {
                 if (op->src[0]->type != GGML_TYPE_F32) {
@@ -788,6 +812,9 @@ bool ggml_metal_device_supports_op(ggml_metal_device_t dev, const struct ggml_te
                         return false;
                 };
             }
+        case GGML_OP_OPT_STEP_ADAMW:
+        case GGML_OP_OPT_STEP_SGD:
+            return has_simdgroup_reduction;
         default:
             return false;
     }
@@ -812,11 +839,12 @@ struct ggml_metal_buffer_wrapper {
 };
 
 struct ggml_metal_buffer {
-    void * all_data; // TODO: https://github.com/ggml-org/llama.cpp/pull/15985
+    void * all_data;
     size_t all_size;
 
     // if false, the Metal buffer data is allocated in private GPU memory and is not shared with the host
     bool is_shared;
+    bool owned;
 
     // multiple buffers are used only to avoid the maximum buffer size limitation when using mmap
     int n_buffers;
@@ -950,11 +978,13 @@ ggml_metal_buffer_t ggml_metal_buffer_init(ggml_metal_device_t dev, size_t size,
         res->all_data = ggml_metal_host_malloc(size_aligned);
         res->is_shared = true;
     } else {
-        // dummy, non-NULL value - we'll populate this after creating the Metal buffer below
-        res->all_data = (void *) 0x000000400ULL;
+        // use virtual address from g_addr_device counter
+        res->all_data = (void *) atomic_fetch_add_explicit(&g_addr_device, size_aligned, memory_order_relaxed);
         res->is_shared = false;
     }
     res->all_size = size_aligned;
+
+    res->owned = true;
 
     res->device = ggml_metal_device_get_obj(dev);
     res->queue  = ggml_metal_device_get_queue(dev);
@@ -966,15 +996,13 @@ ggml_metal_buffer_t ggml_metal_buffer_init(ggml_metal_device_t dev, size_t size,
         res->buffers[0].metal = nil;
 
         if (size_aligned > 0) {
-            if (props_dev->use_shared_buffers &&shared) {
+            if (props_dev->use_shared_buffers && shared) {
                 res->buffers[0].metal = [res->device newBufferWithBytesNoCopy:res->all_data
                                                                   length:size_aligned
                                                                  options:MTLResourceStorageModeShared
                                                              deallocator:nil];
             } else {
                 res->buffers[0].metal = [res->device newBufferWithLength:size_aligned options:MTLResourceStorageModePrivate];
-
-                res->all_data = (void *) (res->buffers[0].metal.gpuAddress);
             }
         }
 
@@ -1007,6 +1035,7 @@ ggml_metal_buffer_t ggml_metal_buffer_map(ggml_metal_device_t dev, void * ptr, s
     res->all_size = size;
 
     res->is_shared = true;
+    res->owned = false;
 
     res->n_buffers = 0;
 
@@ -1100,7 +1129,7 @@ void ggml_metal_buffer_free(ggml_metal_buffer_t buf) {
 
     ggml_metal_buffer_rset_free(buf);
 
-    if (buf->is_shared) {
+    if (buf->is_shared && buf->owned) {
 #if TARGET_OS_OSX
         vm_deallocate((vm_map_t)mach_task_self(), (vm_address_t)buf->all_data, buf->all_size);
 #else
@@ -1121,7 +1150,7 @@ bool ggml_metal_buffer_is_shared(ggml_metal_buffer_t buf) {
 
 void ggml_metal_buffer_memset_tensor(ggml_metal_buffer_t buf, struct ggml_tensor * tensor, uint8_t value, size_t offset, size_t size) {
     if (buf->is_shared) {
-        memset((char *)tensor->data + offset, value, size);
+        memset((char *) tensor->data + offset, value, size);
         return;
     }
 
@@ -1150,7 +1179,7 @@ void ggml_metal_buffer_memset_tensor(ggml_metal_buffer_t buf, struct ggml_tensor
 
 void ggml_metal_buffer_set_tensor(ggml_metal_buffer_t buf, struct ggml_tensor * tensor, const void * data, size_t offset, size_t size) {
     if (buf->is_shared) {
-        memcpy((char *)tensor->data + offset, data, size);
+        memcpy((char *) tensor->data + offset, data, size);
         return;
     }
 
@@ -1161,6 +1190,8 @@ void ggml_metal_buffer_set_tensor(ggml_metal_buffer_t buf, struct ggml_tensor * 
                                                                length:size
                                                               options:MTLResourceStorageModeShared
                                                           deallocator:nil];
+
+        GGML_ASSERT(buf_src);
 
         // dst
         struct ggml_metal_buffer_id bid_dst = ggml_metal_buffer_get_id(buf, tensor);
@@ -1203,7 +1234,7 @@ void ggml_metal_buffer_set_tensor(ggml_metal_buffer_t buf, struct ggml_tensor * 
 
 void ggml_metal_buffer_get_tensor(ggml_metal_buffer_t buf, const struct ggml_tensor * tensor, void * data, size_t offset, size_t size) {
     if (buf->is_shared) {
-        memcpy(data, (const char *)tensor->data + offset, size);
+        memcpy(data, (const char *) tensor->data + offset, size);
         return;
     }
 
@@ -1217,6 +1248,8 @@ void ggml_metal_buffer_get_tensor(ggml_metal_buffer_t buf, const struct ggml_ten
                                                                length:size
                                                               options:MTLResourceStorageModeShared
                                                           deallocator:nil];
+
+        GGML_ASSERT(buf_dst);
 
         id<MTLCommandQueue>  queue   = buf->queue;
         id<MTLCommandBuffer> cmd_buf = [queue commandBufferWithUnretainedReferences];
