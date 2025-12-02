@@ -1,4 +1,5 @@
 #include "models.h"
+#include <iostream>
 
 llm_build_qwen3moe::llm_build_qwen3moe(const llama_model & model, const llm_graph_params & params) : llm_graph_context(params) {
     const int64_t n_embd_head = hparams.n_embd_head_v;
@@ -17,6 +18,13 @@ llm_build_qwen3moe::llm_build_qwen3moe(const llama_model & model, const llm_grap
     auto * inp_attn = build_attn_inp_kv();
 
     ggml_tensor * inp_out_ids = build_inp_out_ids();
+
+    // Lambda function to determine if a layer should use more experts
+    auto use_more_experts = [](int i_layer, int n_layers) -> bool {
+        return i_layer < n_layers/8 || i_layer >= 7*n_layers/8;
+    //     return i_layer < n_layers/8 || i_layer >= 7*n_layers/8 || (i_layer - n_layers/8)%3 == 2;
+    };
+    const float expert_scale = 0.75f;  // Scale factor for layers using fewer experts
 
     for (int il = 0; il < n_layer; ++il) {
         ggml_tensor * inpSA = inpL;
@@ -82,6 +90,10 @@ llm_build_qwen3moe::llm_build_qwen3moe(const llama_model & model, const llm_grap
                 LLM_NORM_RMS, il);
         cb(cur, "ffn_norm", il);
 
+        // Dynamically adjust n_expert_used based on layer position
+        int n_expert_used_layer = use_more_experts(il, n_layer) ? n_expert_used : std::max(4, (int)(expert_scale * n_expert_used));
+        // std::cout << "layer: " << il << " n_expert_used_layer: " << n_expert_used_layer << std::endl;
+
         ggml_tensor * moe_out =
             build_moe_ffn(cur,
                     model.layers[il].ffn_gate_inp,
@@ -89,7 +101,8 @@ llm_build_qwen3moe::llm_build_qwen3moe(const llama_model & model, const llm_grap
                     model.layers[il].ffn_gate_exps,
                     model.layers[il].ffn_down_exps,
                     nullptr,
-                    n_expert, n_expert_used,
+                //     n_expert, n_expert_used,
+                    n_expert, n_expert_used_layer,
                     LLM_FFN_SILU, true,
                     false, 0.0,
                     LLAMA_EXPERT_GATING_FUNC_TYPE_SOFTMAX,
