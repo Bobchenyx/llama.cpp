@@ -1114,8 +1114,12 @@ ggml_tensor * llm_graph_context::build_moe_ffn(
     assert(n_expert_used > 0);
 
     // order the views before the adds
+    // NOTE: Always create hparams.n_expert_used views to keep graph structure consistent
+    //       for memory pool allocation, but only aggregate n_expert_used of them
     for (uint32_t i = 0; i < hparams.n_expert_used; ++i) {
-        cur_experts[i] = ggml_view_2d(ctx0, experts, n_embd, n_tokens, experts->nb[2], i*experts->nb[1]);
+        // For views beyond actual n_expert_used, create view at index 0 (dummy, will be ignored)
+        int64_t view_idx = ((int64_t)i < n_expert_used) ? i : 0;
+        cur_experts[i] = ggml_view_2d(ctx0, experts, n_embd, n_tokens, experts->nb[2], view_idx*experts->nb[1]);
 
         ggml_build_forward_expand(gf, cur_experts[i]);
     }
@@ -1124,9 +1128,12 @@ ggml_tensor * llm_graph_context::build_moe_ffn(
     // note: here we explicitly use hparams.n_expert_used instead of n_expert_used
     //       to avoid potentially a large number of add nodes during warmup
     //       ref: https://github.com/ggml-org/llama.cpp/pull/14753
+    // NOTE: Only aggregate the actual n_expert_used experts (not hparams.n_expert_used)
+    //       The extra views created above are dummy views pointing to expert[0]
+    //       Disabled for now to avoid potential issues with dynamic expert counts
     ggml_tensor * moe_out = cur_experts[0];
 
-    for (uint32_t i = 1; i < hparams.n_expert_used; ++i) {
+    for (uint32_t i = 1; i < n_expert_used; ++i) {
         moe_out = ggml_add(ctx0, moe_out, cur_experts[i]);
     }
 
