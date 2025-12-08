@@ -1116,10 +1116,8 @@ ggml_tensor * llm_graph_context::build_moe_ffn(
     // order the views before the adds
     // NOTE: Always create hparams.n_expert_used views to keep graph structure consistent
     //       for memory pool allocation, but only aggregate n_expert_used of them
-    for (uint32_t i = 0; i < hparams.n_expert_used; ++i) {
-        // For views beyond actual n_expert_used, create view at index 0 (dummy, will be ignored)
-        int64_t view_idx = ((int64_t)i < n_expert_used) ? i : 0;
-        cur_experts[i] = ggml_view_2d(ctx0, experts, n_embd, n_tokens, experts->nb[2], view_idx*experts->nb[1]);
+    for (uint32_t i = 0; i < n_expert_used; ++i) {
+        cur_experts[i] = ggml_view_2d(ctx0, experts, n_embd, n_tokens, experts->nb[2], i*experts->nb[1]);
 
         ggml_build_forward_expand(gf, cur_experts[i]);
     }
