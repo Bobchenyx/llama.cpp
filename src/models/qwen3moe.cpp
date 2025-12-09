@@ -1,5 +1,6 @@
 #include "models.h"
 #include <iostream>
+#include <cmath>
 
 llm_build_qwen3moe::llm_build_qwen3moe(const llama_model & model, const llm_graph_params & params) : llm_graph_context(params) {
     const int64_t n_embd_head = hparams.n_embd_head_v;
@@ -21,10 +22,11 @@ llm_build_qwen3moe::llm_build_qwen3moe(const llama_model & model, const llm_grap
 
     // Lambda function to determine if a layer should use more experts
     auto use_more_experts = [](int i_layer, int n_layers) -> bool {
-        return i_layer < n_layers/8 || i_layer >= 7*n_layers/8;
-    //     return i_layer < n_layers/8 || i_layer >= 7*n_layers/8 || (i_layer - n_layers/8)%3 == 2;
+        return i_layer % 2 == 1;  // every other layer
+        // return i_layer < n_layers/8 || i_layer >= 7*n_layers/8;
+        // return i_layer < n_layers/8 || i_layer >= 7*n_layers/8 || (i_layer - n_layers/8)%3 == 2;
     };
-    const float expert_scale = 0.75f;  // Scale factor for layers using fewer experts
+    const float expert_scale = 0.5f;  // Scale factor for layers using fewer experts
 
     for (int il = 0; il < n_layer; ++il) {
         ggml_tensor * inpSA = inpL;
@@ -91,22 +93,41 @@ llm_build_qwen3moe::llm_build_qwen3moe(const llama_model & model, const llm_grap
         cb(cur, "ffn_norm", il);
 
         // Dynamically adjust n_expert_used based on layer position
-        int n_expert_used_layer = use_more_experts(il, n_layer) ? n_expert_used : std::max(4, (int)(expert_scale * n_expert_used));
-        // std::cout << "layer: " << il << " n_expert_used_layer: " << n_expert_used_layer << std::endl;
+        ggml_tensor * moe_out = nullptr;
 
-        ggml_tensor * moe_out =
-            build_moe_ffn(cur,
+        if (use_more_experts(il, n_layer)) {
+            // Edge layers (first 1/8 and last 1/8): use full experts, no scaling
+            moe_out = build_moe_ffn(cur,
                     model.layers[il].ffn_gate_inp,
                     model.layers[il].ffn_up_exps,
                     model.layers[il].ffn_gate_exps,
                     model.layers[il].ffn_down_exps,
                     nullptr,
-                //     n_expert, n_expert_used,
-                    n_expert, n_expert_used_layer,
+                    n_expert, n_expert_used,
                     LLM_FFN_SILU, true,
-                    false, 0.0,
+                    false, 1.0f,  // no scaling for edge layers
                     LLAMA_EXPERT_GATING_FUNC_TYPE_SOFTMAX,
                     il);
+        } else {
+            // Middle layers (3/4): use fewer experts with sqrt compensation
+            int n_expert_used_layer = std::max(4, (int)(expert_scale * n_expert_used));
+            // float w_scale = 0.9f;
+            float w_scale = sqrtf((float)n_expert_used_layer / (float)n_expert_used);
+
+            moe_out = build_moe_ffn(cur,
+                    model.layers[il].ffn_gate_inp,
+                    model.layers[il].ffn_up_exps,
+                    model.layers[il].ffn_gate_exps,
+                    model.layers[il].ffn_down_exps,
+                    nullptr,
+                    n_expert, n_expert_used_layer,
+                    LLM_FFN_SILU, true,
+                    true, w_scale,  // apply sqrt compensation for middle layers
+                    LLAMA_EXPERT_GATING_FUNC_TYPE_SOFTMAX,
+                    il);
+        }
+        // std::cout << "layer: " << il << " n_expert_used_layer: " << n_expert_used_layer << std::endl;
+
         cb(moe_out, "ffn_moe_out", il);
         cur = moe_out;
 
