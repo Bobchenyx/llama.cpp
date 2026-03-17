@@ -13,7 +13,17 @@ Both techniques are developed and extended from `tools/imatrix/`. Target models:
 
 ```
 iccad/
-├── README.md       - this file
+├── README.md       - this file (index of all documents)
 ├── notes/          - reading notes, code understanding, and ideas
 └── results/        - experiment outputs, perplexity scores, imatrix stats
 ```
+
+## Notes Index
+
+| File | Content |
+|------|---------|
+| [notes/imatrix-code-analysis.md](notes/imatrix-code-analysis.md) | Complete walkthrough of `tools/imatrix/imatrix.cpp`: data flow, collection logic for dense vs MoE layers, statistics, file formats, and extension points |
+
+## Results Index
+
+*(empty — add experiment results here as they are produced)*

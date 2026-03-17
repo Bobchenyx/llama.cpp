@@ -41,6 +41,17 @@ The imatrix tool collects **squared activation norms** for each tensor across ca
 
 The main source file is `tools/imatrix/imatrix.cpp`.
 
+## Documentation Maintenance
+
+**All documentation must be written in English** (for team communication).
+
+**Every session, keep all documents current:**
+
+- After any meaningful discovery, code change, or experiment result, update the relevant file in `iccad/` immediately — do not defer to end of session.
+- If a note or result is added to `iccad/`, update `iccad/README.md` index and the index in this file (`## Research Notes & Results`) in the same commit.
+- If CLAUDE.md itself becomes outdated (e.g., a build flag changes, a new tool is added), update it before moving on.
+- Commit message convention for documentation: `iccad : <short description>`.
+
 ## AI Usage Policy
 
 This project does **not** accept pull requests that are fully or predominantly AI-generated. AI tools may be used only in an assistive capacity — corrections, expanding on verbose modifications already conceived by a human contributor, etc. All AI usage requires explicit disclosure. See [AGENTS.md](AGENTS.md) and [CONTRIBUTING.md](CONTRIBUTING.md) for the full policy.
@@ -145,6 +156,18 @@ Models are stored in GGUF format. Conversion scripts (`convert_*.py`) transform 
 - Use `clang-format` (clang-tools v15+) when in doubt about formatting
 - Avoid adding third-party dependencies or extra headers
 - New model support: start with CPU-only in the initial PR
+
+## Research Notes & Results
+
+All research documents live in `iccad/`. See [iccad/README.md](iccad/README.md) for the full index.
+
+### Notes
+| File | Content |
+|------|---------|
+| [imatrix-code-analysis.md](iccad/notes/imatrix-code-analysis.md) | Complete walkthrough of `tools/imatrix/imatrix.cpp`: data flow, collection logic for dense vs MoE layers, statistics, file formats, and extension points for our research |
+
+### Results
+*(empty — add experiment results here as they are produced)*
 
 ## Adding a New Model
 
