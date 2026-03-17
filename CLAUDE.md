@@ -22,7 +22,7 @@ Both targets may use **different reference metrics** — e.g., one might use ZD 
 ```bash
 # Build (CUDA recommended for speed)
 cmake -B build -DGGML_CUDA=ON
-cmake --build build --config Release --target llama-imatrix llama-quantize llama-cli llama-server llama-perplexity
+cmake --build build --config Release --target llama-imatrix llama-imatrix-iccad llama-quantize llama-cli llama-server llama-perplexity
 
 # Collect importance matrix from a calibration dataset
 ./build/bin/llama-imatrix -m model.gguf -f calibration-data.txt -o imatrix.gguf -ngl 99
@@ -70,7 +70,7 @@ cmake -B build -DGGML_CUDA=ON -DBUILD_SHARED_LIBS=OFF -DLLAMA_CURL=OFF -DCMAKE_B
 cmake --build build
 
 # Build only the relevant targets (faster iteration)
-cmake --build build --config Release --target llama-imatrix llama-quantize llama-cli llama-server llama-perplexity
+cmake --build build --config Release --target llama-imatrix llama-imatrix-iccad llama-quantize llama-cli llama-server llama-perplexity
 ```
 
 ## Testing
