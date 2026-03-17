@@ -15,7 +15,7 @@ Both targets may use **different reference metrics** — e.g., one might use ZD 
 
 **Target models**: Qwen3 MoE and Qwen3.5 MoE series.
 
-**Primary focus area**: `tools/imatrix/` — understanding, using, and extending the importance matrix tool to collect and expose the per-layer/per-expert activation statistics needed for both techniques.
+**Primary focus area**: `tools/imatrix-iccad/` — our working copy of the imatrix tool where all ICCAD modifications are made. `tools/imatrix/` is kept as a fixed bug-fixed upstream baseline for reference and diffing.
 
 ### imatrix Workflow
 
@@ -39,7 +39,7 @@ cmake --build build --config Release --target llama-imatrix llama-imatrix-iccad 
 
 The imatrix tool collects **squared activation norms** for each tensor across calibration data chunks. Key statistics per tensor: `Σ(Act²)`, ZD Score (layer importance from arXiv:2406.17415), entropy, and cosine similarity to adjacent layers. These directly inform which layers to prune or quantize more aggressively.
 
-The main source file is `tools/imatrix/imatrix.cpp`.
+The baseline source is `tools/imatrix/imatrix.cpp`. Our working file is `tools/imatrix-iccad/imatrix-iccad.cpp`.
 
 ## Documentation Maintenance
 

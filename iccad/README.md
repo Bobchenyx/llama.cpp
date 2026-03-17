@@ -7,7 +7,7 @@ This folder contains research notes, experiment results, and documentation for t
 1. **Activation-based pruning**: per-layer `top_k` reduction for MoE models, guided by activation statistics.
 2. **Expert quantization**: per-layer mixed-precision quantization for MoE expert weights, guided by importance metrics.
 
-Both techniques are developed and extended from `tools/imatrix/`. Target models: Qwen3 MoE and Qwen3.5 MoE series.
+Both techniques are developed and extended in `tools/imatrix-iccad/` (our working copy). `tools/imatrix/` is kept as a fixed bug-fixed upstream baseline. Target models: Qwen3 MoE and Qwen3.5 MoE series.
 
 ## Structure
 

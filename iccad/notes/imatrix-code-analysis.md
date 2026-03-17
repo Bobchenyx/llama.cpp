@@ -1,6 +1,7 @@
 # imatrix Code Analysis
 
-Source file: `tools/imatrix/imatrix.cpp`
+Baseline source: `tools/imatrix/imatrix.cpp` (fixed upstream, do not modify)
+Working copy: `tools/imatrix-iccad/imatrix-iccad.cpp` (all ICCAD modifications go here)
 
 ---
 
