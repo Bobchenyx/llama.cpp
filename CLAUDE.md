@@ -4,28 +4,62 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 IMPORTANT: Ensure you've thoroughly reviewed the [AGENTS.md](AGENTS.md) file before beginning any work.
 
+## Research Context (ICCAD Project)
+
+This is the `iccad` branch of a personal fork of llama.cpp, used for ICCAD research. The goal is a paper combining two techniques applied to MoE models:
+
+1. **Activation-based pruning**: selectively reduce `top_k` (number of activated experts) on a per-layer basis, using a layer-importance metric derived from activation statistics.
+2. **Expert quantization**: apply different quantization levels to different layers' MoE expert weights (mixed-precision quantization), using a (potentially different) per-layer importance metric.
+
+Both targets may use **different reference metrics** — e.g., one might use ZD Score while the other uses entropy or `Σ(Act²)` — but both are developed and modified from the **same base tool**: `tools/imatrix/`.
+
+**Target models**: Qwen3 MoE and Qwen3.5 MoE series.
+
+**Primary focus area**: `tools/imatrix/` — understanding, using, and extending the importance matrix tool to collect and expose the per-layer/per-expert activation statistics needed for both techniques.
+
+### imatrix Workflow
+
+```bash
+# Build (CUDA recommended for speed)
+cmake -B build -DGGML_CUDA=ON
+cmake --build build --config Release --target llama-imatrix llama-quantize llama-cli llama-server llama-perplexity
+
+# Collect importance matrix from a calibration dataset
+./build/bin/llama-imatrix -m model.gguf -f calibration-data.txt -o imatrix.gguf -ngl 99
+
+# Inspect per-layer/per-tensor statistics
+./build/bin/llama-imatrix --in-file imatrix.gguf --show-statistics
+
+# Use imatrix to guide quantization
+./build/bin/llama-quantize --imatrix imatrix.gguf model.gguf model-q4_k_m.gguf q4_k_m
+
+# Benchmark quantized model quality (perplexity is the primary fast benchmark)
+./build/bin/llama-perplexity -m model-q4_k_m.gguf -f calibration-data.txt -ngl 99
+```
+
+The imatrix tool collects **squared activation norms** for each tensor across calibration data chunks. Key statistics per tensor: `Σ(Act²)`, ZD Score (layer importance from arXiv:2406.17415), entropy, and cosine similarity to adjacent layers. These directly inform which layers to prune or quantize more aggressively.
+
+The main source file is `tools/imatrix/imatrix.cpp`.
+
 ## AI Usage Policy
 
 This project does **not** accept pull requests that are fully or predominantly AI-generated. AI tools may be used only in an assistive capacity — corrections, expanding on verbose modifications already conceived by a human contributor, etc. All AI usage requires explicit disclosure. See [AGENTS.md](AGENTS.md) and [CONTRIBUTING.md](CONTRIBUTING.md) for the full policy.
 
 ## Build Commands
 
+This project targets **CPU and CUDA only**. Other backends (Metal, Vulkan, HIP, SYCL, etc.) are out of scope.
+
 ```bash
-# Standard CPU build
-cmake -B build
-cmake --build build --config Release -j $(nproc)
+# Standard build
+cmake -B build -DGGML_CUDA=ON -DBUILD_SHARED_LIBS=OFF -DLLAMA_CURL=OFF
+cmake --build build --config Release
 
 # Debug build
-cmake -B build -DCMAKE_BUILD_TYPE=Debug
-cmake --build build -j $(nproc)
+cmake -B build -DGGML_CUDA=ON -DBUILD_SHARED_LIBS=OFF -DLLAMA_CURL=OFF -DCMAKE_BUILD_TYPE=Debug
+cmake --build build
 
-# CUDA build
-cmake -B build -DGGML_CUDA=ON
-cmake --build build --config Release -j $(nproc)
-
-# Vulkan build
-cmake -B build -DGGML_VULKAN=ON
-cmake --build build --config Release -j $(nproc)
+# Build only the relevant targets (faster iteration)
+cmake --build build --config Release --target llama-imatrix llama-quantize llama-cli llama-server llama-perplexity
 ```
 
 ## Testing
@@ -42,11 +76,12 @@ cd build && ctest -R test-tokenizer-0 --output-on-failure
 # Run tests with a label
 cd build && ctest -L main --output-on-failure
 
-# Run the full CI locally
+# Run the full CI locally (CPU)
 bash ./ci/run.sh ./tmp/results ./tmp/mnt
 
 # With CUDA
 GG_BUILD_CUDA=1 bash ./ci/run.sh ./tmp/results ./tmp/mnt
+
 ```
 
 Test binaries are built to `build/bin/`. Test sources live in `tests/`.
@@ -69,7 +104,7 @@ tests/         - Unit and integration tests
 
 ### Key Layers
 
-**ggml** (`ggml/include/ggml.h`, `ggml/src/`): The tensor computation library. Defines `ggml_tensor`, `ggml_context`, and the graph execution engine. Backend implementations (CUDA, Metal, Vulkan, HIP, SYCL, etc.) each live in `ggml/src/ggml-<backend>/`. The backend API is in `ggml/include/ggml-backend.h`.
+**ggml** (`ggml/include/ggml.h`, `ggml/src/`): The tensor computation library. Defines `ggml_tensor`, `ggml_context`, and the graph execution engine. Relevant backend implementations are `ggml/src/ggml-cpu/` and `ggml/src/ggml-cuda/`. The backend API is in `ggml/include/ggml-backend.h`.
 
 **libllama** (`include/llama.h`, `src/`): The main public C library. Internal implementation is split into focused files:
 - `src/llama-model.h/cpp` — model weight loading and architecture
