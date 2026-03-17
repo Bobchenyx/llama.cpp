@@ -174,7 +174,7 @@ Can add filtering logic here — e.g., restrict collection to specific layer ind
 
 All current metrics are derived from `values[]` (squared input activations).
 Potential additions:
-- Per-expert activation frequency: `counts[ex] / total_tokens` → directly useful for pruning top_k
+- ~~Per-expert activation frequency: `counts[ex] / total_tokens`~~ **Implemented** — see ICCAD Extensions below
 - Expert activation distribution uniformity (entropy over experts within a layer)
 
 ### 3. Output Format Extension (extend save_imatrix)
@@ -200,6 +200,32 @@ Our per-layer mixed-precision quantization will require additional logic in `too
 - `e.values[ex*in_dim + j] / e.counts[ex]` = average squared activation of the j-th input feature for expert `ex`
 - Aggregate this into a per-expert importance score → assign quantization precision accordingly
 - Current quantize tool uses a merged imatrix across all experts; needs modification to support per-expert differentiation
+
+---
+
+## ICCAD Extensions (tools/imatrix-iccad/imatrix-iccad.cpp)
+
+### Per-expert activation count display (2026-03-17)
+
+Added to `--show-statistics` output. After the existing per-tensor and per-layer summary tables, a new section prints raw expert activation counts for every MoE transformer block.
+
+**Data flow:**
+
+1. `tensor_statistics` struct: added `std::vector<int64_t> expert_counts` field (non-empty only for MoE tensors where `n_mat > 1`).
+2. `compute_statistics()`: at the end, if `n_mat > 1`, copies `e.counts` into `ts.expert_counts`.
+3. `show_statistics()`: after the existing tables, collects one representative tensor per layer (all MoE tensors within a block share identical routing counts), then prints:
+
+```
+Per-expert activation counts — MoE layers (N layers, M experts each)
+(Counts reflect total activations over the calibration dataset)
+
+ Layer   Exp0    Exp1    ...    Total
+------  ------  ------  ...  ------
+     0   12345   11234  ...   98765
+     1   ...
+```
+
+**Design decision**: No Top-K% columns. The experiment plan runs two separate model binaries (configured with `num_experts_per_token=8` and `num_experts_per_token=4`) and compares their imatrix outputs directly. The raw per-expert counts are sufficient for that comparison.
 
 ---
 

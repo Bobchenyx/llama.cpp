@@ -56,6 +56,8 @@ struct tensor_statistics {
     float entropy      = 0.0f;
     float zd           = 0.0f;
     float cossim       = 0.0f;
+    // per-expert activation counts (non-empty only for MoE tensors, i.e. n_experts > 1)
+    std::vector<int64_t> expert_counts;
 };
 
 class IMatrixCollector {
@@ -199,6 +201,10 @@ static void compute_statistics(std::vector<tensor_statistics> & tstats, const st
     ts.active     = active_ratio;
     ts.entropy    = entropy;
     ts.zd         = static_cast<float>(z_score) / ts.elements;
+    // store raw per-expert counts for MoE tensors (n_mat > 1 means multiple experts)
+    if (n_mat > 1) {
+        ts.expert_counts = std::vector<int64_t>(e.counts.begin(), e.counts.end());
+    }
 }
 
 static void compute_cossim(std::vector<tensor_statistics> & tstats) {
@@ -1206,6 +1212,49 @@ static bool show_statistics(const common_params & params) {
         }
     }
     LOG_INF("\n");
+
+    // --- Per-expert activation count section (MoE layers only) ---
+    // Collect one representative tensor per layer (all MoE tensors in a layer share
+    // the same routing, so their counts[] are identical — we just take the first one).
+    std::map<int, const tensor_statistics *> moe_by_layer;
+    for (const auto & tstat : ts) {
+        if (tstat.expert_counts.empty()) continue;
+        std::string layer_str, tname;
+        process_tensor_name(tstat.tensor, layer_str, tname);
+        int blk = -1;
+        try { blk = std::stoi(layer_str); } catch (...) {}
+        if (blk >= 0 && moe_by_layer.find(blk) == moe_by_layer.end()) {
+            moe_by_layer[blk] = &tstat;
+        }
+    }
+
+    if (!moe_by_layer.empty()) {
+        const int n_experts = (int) moe_by_layer.begin()->second->expert_counts.size();
+        LOG_INF("\nPer-expert activation counts — MoE layers (%d layers, %d experts each)\n",
+                (int) moe_by_layer.size(), n_experts);
+        LOG_INF("(Counts reflect total activations over the calibration dataset)\n\n");
+
+        // Header: Layer | Expert_0 | Expert_1 | ... | Total
+        LOG_INF("%6s", "Layer");
+        for (int ex = 0; ex < n_experts; ++ex) {
+            LOG_INF("\tExp%d", ex);
+        }
+        LOG_INF("\tTotal\n");
+        LOG_INF("------");
+        for (int ex = 0; ex < n_experts; ++ex) LOG_INF("\t------");
+        LOG_INF("\t------\n");
+
+        for (const auto & [blk, tstat] : moe_by_layer) {
+            const auto & counts = tstat->expert_counts;
+            int64_t total = 0;
+            for (auto c : counts) total += c;
+
+            LOG_INF("%6d", blk);
+            for (auto c : counts) LOG_INF("\t%ld", (long)c);
+            LOG_INF("\t%ld\n", (long)total);
+        }
+        LOG_INF("\n");
+    }
 
     return true;
 }

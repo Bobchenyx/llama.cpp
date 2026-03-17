@@ -22,7 +22,7 @@ iccad/
 
 | File | Content |
 |------|---------|
-| [notes/imatrix-code-analysis.md](notes/imatrix-code-analysis.md) | Complete walkthrough of `tools/imatrix/imatrix.cpp`: data flow, collection logic for dense vs MoE layers, statistics, file formats, and extension points |
+| [notes/imatrix-code-analysis.md](notes/imatrix-code-analysis.md) | Complete walkthrough of `tools/imatrix/imatrix.cpp`: data flow, collection logic for dense vs MoE layers, statistics, file formats, and extension points. Also documents ICCAD extensions implemented in `tools/imatrix-iccad/` (per-expert activation count display). |
 
 ## Results Index
 
