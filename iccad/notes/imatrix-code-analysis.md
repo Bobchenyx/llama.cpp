@@ -4,6 +4,22 @@ Source file: `tools/imatrix/imatrix.cpp`
 
 ---
 
+## Bug Fixes Applied (2026-03-17)
+
+Four divide-by-zero bugs fixed, all triggered when running `--show-statistics` on a MoE model imatrix.
+
+| # | Location | Root Cause | Fix |
+|---|----------|-----------|-----|
+| 1 | `compute_statistics()` | `values[i] / counts[i]` when `counts[i] == 0` for unactivated MoE experts | Skip experts with zero count |
+| 2 | `compute_statistics()` | `max_element` / `accumulate` on empty vector after all counts are zero | Return early if `activations` is empty |
+| 3 | `compute_cossim()` | `dp / (curr_mag * prev_mag)` when tensor is all-zeros | Guard with `denom > 0.0f` check |
+| 4 | `load_imatrix()` | `max_count / (m_params.n_ctx / m_params.n_parallel)` — integer division by zero because `g_collector.set_params()` is never called before `show_statistics()` in `main()`, leaving `m_params.n_ctx` at default value 0 | Read `m_last_chunk` directly from `imatrix.chunk_count` GGUF metadata key; fallback to division only if key is absent, with zero guard |
+
+Fixes 1-2 sourced from upstream PRs: [ggml-org/llama.cpp#19532](https://github.com/ggml-org/llama.cpp/pull/19532) / [auroralabs-loci/llama.cpp#1219](https://github.com/auroralabs-loci/llama.cpp/pull/1219).
+Fixes 3-4 identified and resolved independently.
+
+---
+
 ## High-Level Flow
 
 ```
