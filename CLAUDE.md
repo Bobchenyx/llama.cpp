@@ -171,7 +171,7 @@ All research documents live in `iccad/`. See [iccad/README.md](iccad/README.md) 
 | Description | Date |
 |-------------|------|
 | Qwen3 MoE imatrix E8 vs E4 expert activation distributions collected and analyzed | 2026-03-17 |
-| Identified ffn_down Σ(Act²) ratio as key sensitivity indicator; late layers (43–47) most sensitive | 2026-03-17 |
+| ffn_down Σ(Act²) ratio (E4/E8) grows with depth but is magnitude scaling only (reference, not selection criterion) | 2026-03-17 |
 | Preliminary candidate metrics: Gini, ΔEntropy, ffn_down ratio (reference only) | 2026-03-17 |
 
 ## Adding a New Model

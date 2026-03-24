@@ -47,7 +47,7 @@ Reducing top_k from 8→4 causes activation norms to **increase** (not decrease)
 | `ffn_up_exps`   | 1.07–1.16 | Same as gate (tied routing) |
 | `ffn_down_exps` | **1.10–1.60** | **Monotonically increasing with depth** |
 
-The `ffn_down_exps` (output projection) ratio grows from ~1.1 at shallow layers to ~1.6 at layers 45–46. This suggests **later layers are most stressed by top_k reduction** and are strong candidates for retaining top_k=8.
+The `ffn_down_exps` (output projection) ratio grows from ~1.1 at shallow layers to ~1.6 at layers 45–46. However, this is **purely a magnitude scaling effect** — fewer active experts → each expert compensates with stronger activations — and can be corrected by a simple scaling factor. This ratio is **not suitable as a standalone sensitivity metric** for top_k selection.
 
 ### 3. Expert distribution concentration varies systematically across layers
 
