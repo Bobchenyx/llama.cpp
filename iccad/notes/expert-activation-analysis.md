@@ -51,14 +51,15 @@ The `ffn_down_exps` (output projection) ratio grows from ~1.1 at shallow layers 
 
 ### 3. Expert distribution concentration varies systematically across layers
 
-Using the **Gini coefficient** and **Top-4 coverage %** (what fraction of total E8 activations come from the globally 4 most-used experts):
+Using the **Gini coefficient** of per-expert activation counts:
 
 | Metric | Range | Most uniform | Most concentrated |
 |--------|-------|-------------|------------------|
 | Gini (E8) | 0.24–0.40 | Layers 0–1 | Layers 21, 25, 14 |
-| Top-4% (E8) | 7–13% | Layers 0, 5 | Layers 14, 38, 17 |
 
-Early layers (0–1) have the most uniform expert distributions — reducing top_k there loses the most diversity. Mid layers (14, 17, 24, 25, 38) are most concentrated — top_k=4 already captures a larger share of the mass there.
+Early layers (0–1) have the most uniform expert distributions — reducing top_k there loses the most diversity. Mid layers (14, 17, 24, 25) are most concentrated.
+
+> **Note**: "Top-K coverage %" (fraction of total activations from the globally K most-used experts) was evaluated and **discarded** as a metric — it measures global popularity, but routing is per-token and dynamic, so this statistic has no practical meaning for top_k selection.
 
 ### 4. Entropy drops more in some layers than others under E4
 
@@ -83,29 +84,26 @@ The following per-layer metrics derived from imatrix data can guide which layers
 | Metric | Signal direction | How to use |
 |--------|-----------------|-----------|
 | **Gini(E8 counts)** | Higher → safer to prune | Layers with high Gini already route to a few experts; cutting top_k loses less |
-| **Top-4 coverage % (E8)** | Higher → safer to prune | More of the mass is already captured by the top-4 experts |
 | **ΔEntropy = Entr(E4)−Entr(E8)** | More negative → more sensitive | Layers where routing diversity collapses most under E4 |
-| **ffn_down Σ(Act²) ratio (E4/E8)** | Higher → more sensitive | Late-layer output projections are most stressed; prefer keeping top_k=8 |
+| **ffn_down Σ(Act²) ratio (E4/E8)** | Reference only | Magnitude scaling, correctable by a scaling factor; not a standalone criterion |
 | **CosSim to adjacent layer (E8)** | Higher → safer to prune | Redundant layers can absorb more pruning |
 | **ZD Score (E8)** | Higher → more important overall | Indicates presence of high-salience features; avoid pruning |
+
+> **Discarded**: Top-K coverage % — global expert popularity is meaningless because routing is per-token dynamic selection.
 
 ---
 
 ## Preliminary Layer Recommendations (Heuristic)
 
-Based on the combined score `Top4%_E8 × ffn_down_ratio`, rough groupings:
+Based on **ΔEntropy** as the primary sensitivity metric (most routing diversity collapse = should keep top_k=8):
 
-**Candidates for top_k=4 (concentrated routing, robust gate/up activations)**:
-- Layers 14, 17, 24, 25, 38 (high Top-4%, moderate ffn_down ratio)
-- Layers 6, 7, 12, 13, 22, 23 (moderately concentrated)
+**Top 12 layers to keep at top_k=8** (by ΔEntropy, most sensitive first):
+Layers 24, 29, 37, 36, 12, 17, 47, 35, 33, 19, 34, 32
 
-**Candidates for top_k=8 (late layers, large ffn_down sensitivity)**:
-- Layers 43–47 (ffn_down ratio ≥ 1.4; highest absolute Σ(Act²))
-- Layers 40–42 (ffn_down ratio ~1.35–1.38)
+**Remaining 36 layers use top_k=4**:
+Layers 0–11, 13–16, 18, 20–23, 25–28, 30–31, 38–46
 
-**Ambiguous / needs perplexity validation**:
-- Layers 0–5 (low absolute importance but very uniform routing)
-- Layers 28–35 (mid-range on all metrics)
+Note: these are distributed across the full depth, not concentrated in late layers — routing diversity loss is not monotonically correlated with depth.
 
 ---
 
