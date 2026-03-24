@@ -1,7 +1,7 @@
 # Per-Layer top_k Sensitivity Analysis — Design Document
 
 **Date**: 2026-03-23
-**Status**: Design phase
+**Status**: Phase 1a implemented (router-level analysis in callback)
 
 ---
 
@@ -16,6 +16,48 @@ Metrics derived from comparing pure E8 vs pure E4 may not accurately predict per
 ## Goal
 
 For each of the 48 MoE layers, measure **how much the layer's output changes** when its top_k is reduced (e.g., 8→4), while keeping all other layers at their baseline configuration (top_k=8). This gives a per-layer sensitivity score free from inter-layer distribution shift.
+
+---
+
+## Methodology Overview
+
+### What the baseline imatrix tool does
+
+The standard imatrix tool collects **squared input activation norms** (`Σ(x²)`) for every weight tensor during calibration inference. For MoE layers, each expert is counted separately. The resulting importance matrix guides quantization — dimensions with larger activations receive higher precision.
+
+### What we add: router-level analysis
+
+During the same inference pass, when the callback detects a MoE router weight tensor (`ffn_gate_inp`), we additionally read the **output tensor** (router logits `[n_expert, n_tokens]`) and compute per-token routing statistics. This is zero-cost relative to the existing imatrix collection — it only requires one additional GPU→CPU copy of a small tensor (128 × n_tokens floats) per MoE layer.
+
+For each token, we compute softmax over all 128 expert logits, sort descending, then extract:
+
+| Metric | Definition | What it tells us |
+|--------|-----------|-----------------|
+| Score margin | `prob[3] - prob[4]` | How confident the router is at the k=4 boundary. Large gap → the 5th expert is clearly less important → safe to cut. |
+| Weight concentration | `top4_sum / top8_sum` | How much of the top-8 weight is carried by the top-4. High → the bottom 4 contribute little → safe to cut. |
+| Max probability | max expert probability | Whether routing is dominated by a single expert. High → fewer experts needed. |
+| Routing entropy | `-Σ p·log₂(p)` over all experts | Overall spread of the routing distribution. Low → peaked → fewer experts needed. |
+
+### How this relates to the earlier ΔEntropy analysis
+
+We previously compared two full-model runs (all-E8 vs all-E4) and used **ΔEntropy of expert activation counts** to rank layer sensitivity. That approach measures a **macro-level** effect: how much the overall expert usage distribution changes when top_k is halved.
+
+Router analysis measures a **micro-level** signal: at each individual token, how much does the router "want" to select more than 4 experts? The two perspectives are complementary:
+
+- **ΔEntropy** captures aggregate distribution changes across the full calibration set, but suffers from distribution shift (all layers are changed simultaneously).
+- **Score margin** captures per-token routing confidence at the k=4 boundary under the true E8 input distribution, free from distribution shift.
+
+If both metrics agree (a layer has large ΔEntropy AND small score margin), the layer is clearly sensitive. If they disagree, further validation is needed (Phase 1b offline replay or Phase 2 perplexity experiments).
+
+### Decision procedure (planned)
+
+Once router analysis data is collected:
+
+1. Rank all 48 layers by mean score margin (ascending = most sensitive first).
+2. Cross-reference with ΔEntropy ranking from the earlier E8/E4 analysis.
+3. Select a budget (e.g., 12 layers keep top_k=8, 36 layers reduce to top_k=4).
+4. Assign top_k=8 to the most sensitive layers by combined ranking.
+5. Validate the mixed schedule via perplexity evaluation.
 
 ---
 
@@ -120,23 +162,101 @@ For each of the 48 MoE layers, measure **how much the layer's output changes** w
 
 ---
 
-## Recommended Plan
+## Feasibility Analysis
 
-**Phase 1**: Implement Approach A (offline replay) as the primary tool.
-- Gives per-layer sensitivity scores quickly
-- Independent of distribution shift
-- Results can guide which layers to focus Approach B experiments on
+### Model Dimensions (Qwen3 MoE)
 
-**Phase 2**: Implement Approach B (per-layer inference) for validation.
-- Run perplexity experiments only for the most interesting layers identified by Phase 1
-- Validates whether offline replay sensitivity correlates with actual perplexity impact
-- If correlation is strong, Approach A metrics can be trusted for future experiments
+| Parameter | Value |
+|-----------|-------|
+| `n_embd` | 2048 |
+| `n_ff` (per expert) | 768 |
+| `n_expert` | 128 |
+| `n_expert_used` | 8 |
+| MoE layers | 48 (all transformer blocks) |
+| Calibration tokens | ~430,080 |
+
+### MoE Forward Pass (from `src/llama-graph.cpp` `build_moe_ffn()`)
+
+```
+hidden_state [n_embd, n_tokens]
+  → MUL_MAT with ffn_gate_inp [n_embd, n_expert]     → router logits [n_expert, n_tokens]
+  → softmax → argsort_top_k(8) → weight extraction + normalization (norm_w=true)
+  → MUL_MAT_ID with ffn_gate_exps [n_ff, n_embd, n_expert]  (selected experts only)
+  → MUL_MAT_ID with ffn_up_exps   [n_ff, n_embd, n_expert]
+  → SwiGLU activation
+  → MUL_MAT_ID with ffn_down_exps [n_embd, n_ff, n_expert]
+  → weighted sum across 8 experts → MoE output [n_embd, n_tokens]
+```
+
+### Approach A Memory Estimates
+
+Per-layer hidden state: 430K tokens × 2048 × 2 bytes (float16) = **1.68 GB**
+All 48 layers: **80.6 GB** — too large to save at once.
+
+Mitigation: sample 50K tokens → 48 × 50K × 2048 × 2 = **9.4 GB**, or process in chunks.
+
+### Data Access in Callback
+
+The imatrix eval callback receives the output tensor `t` at `ask=false` time. For a `GGML_OP_MUL_MAT` with `ffn_gate_inp`:
+- `src0` = router weight `[n_embd, n_expert]`
+- `src1` = hidden state `[n_embd, n_tokens]` (input activations)
+- `t` = router logits `[n_expert, n_tokens]` (output, already computed)
+
+The output tensor can be read from GPU using `ggml_backend_tensor_get()`, same pattern as `src1`. Tensor name pattern: `blk.{L}.ffn_gate_inp.weight`.
+
+---
+
+## Recommended Plan (Updated)
+
+**Phase 1a** (implemented): Router-level analysis in callback.
+- During inference, detect `ffn_gate_inp` tensors and read the output logits.
+- Compute per-token softmax → sort → score margin (prob[3]-prob[4]) and weight concentration (top4/top8).
+- Accumulate per-layer statistics; print summary table after inference.
+- Cost: one additional GPU→CPU copy of 128×n_tokens floats per MoE layer (negligible).
+- **Purpose**: determine whether router-level signals correlate with sensitivity. If layers with small score margin (routing is uncertain at the k=4 boundary) also show high perplexity impact, then this is a cheap and effective metric.
+
+**Phase 1b** (if needed): Save hidden states for full offline replay.
+- Modify callback to also save `src1` (hidden states before routing) to disk.
+- Implement MoE forward pass in Python (numpy/torch) for offline replay with different top_k.
+- Measure actual output difference (cosine similarity, L2, relative norm).
+- Only pursue if Phase 1a router metrics are insufficient.
+
+**Phase 2**: Per-layer inference validation (Approach B).
+- Run perplexity experiments only for the most interesting layers identified by Phase 1.
+- Validates whether router-level or offline-replay sensitivity correlates with actual perplexity impact.
+
+---
+
+## Phase 1a Implementation
+
+**File**: `tools/imatrix-iccad/imatrix-iccad.cpp`
+
+**Data structure** (`router_layer_stats`):
+- `n_tokens`: total tokens processed
+- `sum_score_margin`, `sum_score_margin_sq`: for mean/stddev of prob[3]-prob[4]
+- `sum_weight_conc`, `sum_weight_conc_sq`: for mean/stddev of top4/top8
+- `sum_max_prob`: mean of max expert probability
+- `sum_entropy`: mean per-token routing entropy (bits)
+
+**Callback logic** (in the dense `GGML_OP_MUL_MAT` branch):
+1. Check if `wname` contains `"ffn_gate_inp"`
+2. Extract layer index via `process_tensor_name()`
+3. Copy output tensor `t` from GPU (`ggml_backend_tensor_get`)
+4. For each token: softmax over 128 logits → sort descending → compute metrics → accumulate
+
+**Output**: summary table printed after inference with per-layer mean/std of all metrics. Also persisted to the imatrix GGUF file as a `imatrix.router_stats` tensor (shape `[8, n_layers]`, float32), so router analysis can be viewed later via `--show-statistics` without re-running inference.
+
+**Interpretation guide**:
+- **Large score margin** → routing is confident at k=4 boundary → safe to reduce top_k
+- **High weight concentration** → top-4 experts carry most of the weight → safe to reduce
+- **Low routing entropy** → routing is peaked → fewer experts needed
+- **High max probability** → one expert dominates → safe to reduce
 
 ---
 
 ## Open Questions
 
-1. **What distance metric best captures "sensitivity"?** Cosine similarity of outputs? L2 norm of difference? Relative norm change? Need to experiment.
-2. **How many tokens to sample?** Saving all ~430K tokens per layer may be prohibitive. Is a random 10K–50K subset sufficient?
+1. **What distance metric best captures "sensitivity"?** Cosine similarity of outputs? L2 norm of difference? Relative norm change? Need to experiment (Phase 1b).
+2. **How many tokens to sample for offline replay?** Saving all ~430K tokens per layer is ~1.68 GB/layer. A random 10K–50K subset may suffice.
 3. **Should we also test intermediate top_k values (e.g., 5, 6, 7)?** This would give a sensitivity curve per layer, not just a binary E8 vs E4 comparison.
-4. **Router score margin**: the gap between the k-th and (k+1)-th expert score might be a cheap proxy for sensitivity — layers where the margin is small → more sensitive to top_k reduction. Worth computing alongside Approach C.
+4. **Does score margin correlate with perplexity impact?** This is the key validation question for Phase 1a. If yes, score margin is a cheap and reliable metric.

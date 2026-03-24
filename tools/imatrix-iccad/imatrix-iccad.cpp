@@ -60,6 +60,17 @@ struct tensor_statistics {
     std::vector<int64_t> expert_counts;
 };
 
+// ICCAD: per-layer router analysis statistics (collected during inference)
+struct router_layer_stats {
+    int64_t n_tokens = 0;
+    double sum_score_margin    = 0.0;  // prob[k-1] - prob[k] at k=4 boundary
+    double sum_score_margin_sq = 0.0;
+    double sum_weight_conc     = 0.0;  // top-4 share of top-8 weight
+    double sum_weight_conc_sq  = 0.0;
+    double sum_max_prob        = 0.0;  // max expert probability
+    double sum_entropy         = 0.0;  // routing entropy (bits)
+};
+
 class IMatrixCollector {
 public:
     IMatrixCollector() = default;
@@ -70,6 +81,8 @@ public:
     bool load_imatrix_legacy(const char * fname);
     bool load_imatrix(const char * file_name);
     const std::unordered_map<std::string, Stats> & get_mstats() const { return m_stats; }
+    const std::map<int, router_layer_stats> & get_router_stats() const { return m_router_stats; }
+    void print_router_stats() const;
 private:
     std::unordered_map<std::string, Stats> m_stats;
     common_params                          m_params;
@@ -78,6 +91,9 @@ private:
     int32_t                                m_last_chunk = 0;
     std::vector<char>                      m_src1_data;
     std::vector<char>                      m_ids; // the expert ids from ggml_mul_mat_id
+    // ICCAD: router analysis
+    std::map<int, router_layer_stats>      m_router_stats;
+    std::vector<char>                      m_t_data; // buffer for reading output tensor from GPU
 };
 
 // remove any prefix and suffixes from the name
@@ -410,6 +426,80 @@ bool IMatrixCollector::collect_imatrix(struct ggml_tensor * t, bool ask, void * 
                 }
             }
         }
+
+        // --- ICCAD: Router analysis for MoE gate tensors ---
+        // When this is the router weight (ffn_gate_inp), read the output logits
+        // and compute per-layer score margin and weight concentration.
+        if (wname.find("ffn_gate_inp") != std::string::npos) {
+            const int64_t n_expert    = t->ne[0];
+            const int64_t n_tokens_rt = t->ne[1];
+
+            std::string layer_str, tname;
+            process_tensor_name(wname, layer_str, tname);
+            int layer_idx = -1;
+            try { layer_idx = std::stoi(layer_str); } catch (...) {}
+
+            if (n_expert >= 8 && layer_idx >= 0 && t->buffer != nullptr) {
+                const bool t_is_host = ggml_backend_buffer_is_host(t->buffer);
+                if (!t_is_host) {
+                    m_t_data.resize(ggml_nbytes(t));
+                    ggml_backend_tensor_get(t, m_t_data.data(), 0, ggml_nbytes(t));
+                }
+                const float * t_ptr = t_is_host
+                    ? (const float *) t->data
+                    : (const float *) m_t_data.data();
+
+                auto & rs = m_router_stats[layer_idx];
+                std::vector<float> probs(n_expert);
+
+                for (int64_t tok = 0; tok < n_tokens_rt; ++tok) {
+                    const float * logits_tok = t_ptr + tok * n_expert;
+
+                    // softmax
+                    float max_l = logits_tok[0];
+                    for (int64_t i = 1; i < n_expert; ++i) {
+                        max_l = std::max(max_l, logits_tok[i]);
+                    }
+                    double sum_exp = 0.0;
+                    for (int64_t i = 0; i < n_expert; ++i) {
+                        probs[i] = expf(logits_tok[i] - max_l);
+                        sum_exp += probs[i];
+                    }
+                    for (int64_t i = 0; i < n_expert; ++i) {
+                        probs[i] /= (float) sum_exp;
+                    }
+
+                    // sort descending
+                    std::sort(probs.begin(), probs.end(),
+                              [](float a, float b) { return a > b; });
+
+                    // score margin at k=4 boundary (gap between 4th and 5th expert)
+                    const float score_margin = probs[3] - probs[4];
+
+                    // weight concentration: top-4 share of top-8 weight
+                    float top4 = 0.0f, top8 = 0.0f;
+                    for (int i = 0; i < 4; ++i) top4 += probs[i];
+                    for (int i = 0; i < 8; ++i) top8 += probs[i];
+                    const float weight_conc = (top8 > 0.0f) ? top4 / top8 : 1.0f;
+
+                    // per-token routing entropy (bits, over all experts)
+                    float rent = 0.0f;
+                    for (int64_t i = 0; i < n_expert; ++i) {
+                        if (probs[i] > 0.0f) {
+                            rent -= probs[i] * std::log2(probs[i]);
+                        }
+                    }
+
+                    rs.n_tokens++;
+                    rs.sum_score_margin    += score_margin;
+                    rs.sum_score_margin_sq += (double) score_margin * score_margin;
+                    rs.sum_weight_conc     += weight_conc;
+                    rs.sum_weight_conc_sq  += (double) weight_conc * weight_conc;
+                    rs.sum_max_prob        += probs[0];
+                    rs.sum_entropy         += rent;
+                }
+            }
+        }
     }
 
     return true;
@@ -571,6 +661,11 @@ void IMatrixCollector::save_imatrix(int32_t n_chunk) const {
         data_size += GGML_PAD(ggml_tensor_overhead() + sizeof(float) * kv.second.counts.size(), GGML_MEM_ALIGN);
     }
 
+    // ICCAD: account for router stats tensor
+    if (!m_router_stats.empty()) {
+        data_size += GGML_PAD(ggml_tensor_overhead() + sizeof(float) * 8 * m_router_stats.size(), GGML_MEM_ALIGN);
+    }
+
     // deterministic tensor name order
     std::sort(to_store.begin(), to_store.end());
 
@@ -620,6 +715,28 @@ void IMatrixCollector::save_imatrix(int32_t n_chunk) const {
             gguf_add_tensor(ctx_gguf, in_sum2);
             gguf_add_tensor(ctx_gguf, counts);
         }
+    }
+
+    // ICCAD: save router stats if available
+    if (!m_router_stats.empty()) {
+        const int n_rl = (int) m_router_stats.size();
+        struct ggml_tensor * rt = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 8, n_rl);
+        ggml_set_name(rt, "imatrix.router_stats");
+
+        float * rd = (float *) rt->data;
+        int idx = 0;
+        for (const auto & [layer, rs] : m_router_stats) {
+            rd[idx * 8 + 0] = (float) layer;
+            rd[idx * 8 + 1] = (float) rs.n_tokens;
+            rd[idx * 8 + 2] = (float) rs.sum_score_margin;
+            rd[idx * 8 + 3] = (float) rs.sum_score_margin_sq;
+            rd[idx * 8 + 4] = (float) rs.sum_weight_conc;
+            rd[idx * 8 + 5] = (float) rs.sum_weight_conc_sq;
+            rd[idx * 8 + 6] = (float) rs.sum_max_prob;
+            rd[idx * 8 + 7] = (float) rs.sum_entropy;
+            idx++;
+        }
+        gguf_add_tensor(ctx_gguf, rt);
     }
 
     gguf_write_to_file(ctx_gguf, fname.c_str(), false);
@@ -845,6 +962,24 @@ bool IMatrixCollector::load_imatrix(const char * file_name) {
         }
         const int32_t chunk_size = m_params.n_ctx / std::max(1, (int) m_params.n_parallel);
         m_last_chunk = (chunk_size > 0) ? max_count / chunk_size : 0;
+    }
+
+    // ICCAD: load router stats if present
+    struct ggml_tensor * rt = ggml_get_tensor(ctx, "imatrix.router_stats");
+    if (rt && rt->ne[0] == 8 && rt->ne[1] > 0) {
+        const int n_rl = (int) rt->ne[1];
+        const float * rd = (const float *) rt->data;
+        for (int i = 0; i < n_rl; ++i) {
+            const int layer_idx = (int) rd[i * 8 + 0];
+            auto & rs = m_router_stats[layer_idx];
+            rs.n_tokens            += (int64_t) rd[i * 8 + 1];
+            rs.sum_score_margin    += (double)  rd[i * 8 + 2];
+            rs.sum_score_margin_sq += (double)  rd[i * 8 + 3];
+            rs.sum_weight_conc     += (double)  rd[i * 8 + 4];
+            rs.sum_weight_conc_sq  += (double)  rd[i * 8 + 5];
+            rs.sum_max_prob        += (double)  rd[i * 8 + 6];
+            rs.sum_entropy         += (double)  rd[i * 8 + 7];
+        }
     }
 
     gguf_free(ctx_gguf);
@@ -1256,7 +1391,40 @@ static bool show_statistics(const common_params & params) {
         LOG_INF("\n");
     }
 
+    // ICCAD: display router stats loaded from GGUF (if present)
+    g_collector.print_router_stats();
+
     return true;
+}
+
+void IMatrixCollector::print_router_stats() const {
+    if (m_router_stats.empty()) return;
+
+    LOG_INF("\n");
+    LOG_INF("Router analysis — per-layer score margin and weight concentration (ICCAD)\n");
+    LOG_INF("  Score margin : prob[3] - prob[4]  (gap at k=4 boundary; larger = safer to reduce top_k)\n");
+    LOG_INF("  Weight conc  : top4_sum / top8_sum (fraction of top-8 weight in top-4; higher = safer)\n");
+    LOG_INF("  Max prob     : mean of max expert probability per token\n");
+    LOG_INF("  Rout entropy : mean per-token routing entropy in bits\n\n");
+
+    LOG_INF("%6s\t%10s\t%11s\t%10s\t%10s\t%10s\t%11s\n",
+            "Layer", "Tokens", "ScoreMargin", "SM_Std", "WeightConc", "MaxProb", "RoutEntropy");
+    LOG_INF("------\t----------\t-----------\t----------\t----------\t----------\t-----------\n");
+
+    for (const auto & [layer, rs] : m_router_stats) {
+        if (rs.n_tokens == 0) continue;
+        const double n      = (double) rs.n_tokens;
+        const double mean_sm  = rs.sum_score_margin / n;
+        const double var_sm   = (rs.sum_score_margin_sq / n) - (mean_sm * mean_sm);
+        const double std_sm   = std::sqrt(std::max(0.0, var_sm));
+        const double mean_wc  = rs.sum_weight_conc / n;
+        const double mean_mp  = rs.sum_max_prob / n;
+        const double mean_ent = rs.sum_entropy / n;
+
+        LOG_INF("%6d\t%10ld\t%11.6f\t%10.6f\t%10.6f\t%10.6f\t%11.4f\n",
+                layer, (long) rs.n_tokens, mean_sm, std_sm, mean_wc, mean_mp, mean_ent);
+    }
+    LOG_INF("\n");
 }
 
 int main(int argc, char ** argv) {
@@ -1364,6 +1532,7 @@ int main(int argc, char ** argv) {
         return 1;
     }
 
+    g_collector.print_router_stats();
     g_collector.save_imatrix();
 
     LOG("\n");

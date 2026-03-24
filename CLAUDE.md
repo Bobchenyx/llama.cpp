@@ -166,7 +166,7 @@ All research documents live in `iccad/`. See [iccad/README.md](iccad/README.md) 
 |------|---------|
 | [imatrix-code-analysis.md](iccad/notes/imatrix-code-analysis.md) | Complete walkthrough of `tools/imatrix/imatrix.cpp`: data flow, collection logic for dense vs MoE layers, statistics, file formats, and extension points for our research |
 | [expert-activation-analysis.md](iccad/notes/expert-activation-analysis.md) | Analysis of per-expert activation distributions for Qwen3 MoE (E8 vs E4). Candidate metrics for top_k selection: Gini, ΔEntropy, ffn_down Σ(Act²) ratio. Preliminary layer groupings for mixed top_k schedule. |
-| [per-layer-sensitivity-design.md](iccad/notes/per-layer-sensitivity-design.md) | Design doc: per-layer top_k sensitivity analysis via offline replay (save MLP inputs, replay with different top_k). Addresses distribution shift in pure E8/E4 comparison. |
+| [per-layer-sensitivity-design.md](iccad/notes/per-layer-sensitivity-design.md) | Design doc: per-layer top_k sensitivity analysis. Phase 1a implemented: router-level analysis in callback (score margin, weight concentration, max prob, routing entropy). Phase 1b/2 planned for offline replay and per-layer inference validation. |
 
 ### Results
 | Description | Date |
@@ -174,6 +174,8 @@ All research documents live in `iccad/`. See [iccad/README.md](iccad/README.md) 
 | Qwen3 MoE imatrix E8 vs E4 expert activation distributions collected and analyzed | 2026-03-17 |
 | ffn_down Σ(Act²) ratio (E4/E8) grows with depth but is magnitude scaling only (reference, not selection criterion) | 2026-03-17 |
 | Preliminary candidate metrics: Gini, ΔEntropy, ffn_down ratio (reference only) | 2026-03-17 |
+| Phase 1a router analysis implemented in imatrix-iccad: score margin, weight concentration, max prob, routing entropy | 2026-03-23 |
+| Router analysis vs ΔEntropy cross-comparison: SM and DE are uncorrelated (ρ=-0.07); combined ranking yields 12-layer E8 schedule | 2026-03-23 |
 
 ## Adding a New Model
 

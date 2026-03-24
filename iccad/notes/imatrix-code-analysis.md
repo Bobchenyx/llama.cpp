@@ -227,6 +227,37 @@ Per-expert activation counts — MoE layers (N layers, M experts each)
 
 **Design decision**: No Top-K% columns. The experiment plan runs two separate model binaries (configured with `num_experts_per_token=8` and `num_experts_per_token=4`) and compares their imatrix outputs directly. The raw per-expert counts are sufficient for that comparison.
 
+### Router-level analysis (2026-03-23)
+
+Added to the inference callback (not `--show-statistics`). During imatrix collection, when a `GGML_OP_MUL_MAT` fires for a `ffn_gate_inp` (MoE router) tensor, the output tensor `t` (router logits `[n_expert, n_tokens]`) is read from GPU and analyzed per-token.
+
+**Metrics computed per token, accumulated per layer:**
+
+| Metric | Definition | Sensitivity interpretation |
+|--------|-----------|--------------------------|
+| Score margin | `sorted_prob[3] - sorted_prob[4]` | Larger → routing is confident at k=4 boundary → safer to reduce top_k |
+| Weight concentration | `sum(top4_probs) / sum(top8_probs)` | Higher → top-4 experts carry most weight → safer to reduce |
+| Max probability | max expert probability | Higher → one expert dominates → fewer experts needed |
+| Routing entropy | `-Σ p·log₂(p)` over all 128 experts | Lower → more peaked routing → safer to reduce |
+
+**Data flow:**
+
+1. `router_layer_stats` struct: accumulates sums and squared sums for online mean/stddev computation.
+2. `IMatrixCollector::m_router_stats`: `std::map<int, router_layer_stats>` keyed by layer index.
+3. In `collect_imatrix()` dense MUL_MAT branch: detects `ffn_gate_inp` in tensor name, reads output `t` via `ggml_backend_tensor_get()`, computes softmax → sort → metrics for each token.
+4. `print_router_stats()`: called after inference and in `--show-statistics` mode, prints per-layer summary table.
+5. `save_imatrix()`: writes accumulated router stats as a `imatrix.router_stats` tensor (shape `[8, n_layers]`, float32) in the GGUF file. Fields: layer_idx, n_tokens, sum_score_margin, sum_score_margin_sq, sum_weight_conc, sum_weight_conc_sq, sum_max_prob, sum_entropy.
+6. `load_imatrix()`: reads the tensor back and merges into `m_router_stats` (additive, supports combining multiple imatrix files).
+
+**Output format:**
+
+```
+Router analysis — per-layer score margin and weight concentration (ICCAD)
+ Layer     Tokens  ScoreMargin     SM_Std  WeightConc    MaxProb  RoutEntropy
+------  --------  -----------  ---------  ----------  ---------  -----------
+     0    430080     0.012345   0.008901    0.654321   0.123456       4.5678
+```
+
 ---
 
 ## Implementation Notes
