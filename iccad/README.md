@@ -24,6 +24,7 @@ iccad/
 |------|---------|
 | [notes/imatrix-code-analysis.md](notes/imatrix-code-analysis.md) | Complete walkthrough of `tools/imatrix/imatrix.cpp`: data flow, collection logic for dense vs MoE layers, statistics, file formats, and extension points. Also documents ICCAD extensions implemented in `tools/imatrix-iccad/` (per-expert activation count display). |
 | [notes/expert-activation-analysis.md](notes/expert-activation-analysis.md) | Analysis of per-expert activation distributions for Qwen3 MoE under E8 vs E4 settings. Key findings: ffn_down sensitivity increases with depth; Gini and ΔEntropy as pruning-safety metrics; preliminary layer groupings for mixed top_k schedule. |
+| [notes/per-layer-sensitivity-design.md](notes/per-layer-sensitivity-design.md) | Design document for per-layer top_k sensitivity analysis. Three approaches compared: offline replay (recommended), per-layer inference, router logit capture. Addresses distribution shift problem in pure E8/E4 comparison. |
 
 ## Results Index
 

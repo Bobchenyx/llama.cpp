@@ -166,6 +166,7 @@ All research documents live in `iccad/`. See [iccad/README.md](iccad/README.md) 
 |------|---------|
 | [imatrix-code-analysis.md](iccad/notes/imatrix-code-analysis.md) | Complete walkthrough of `tools/imatrix/imatrix.cpp`: data flow, collection logic for dense vs MoE layers, statistics, file formats, and extension points for our research |
 | [expert-activation-analysis.md](iccad/notes/expert-activation-analysis.md) | Analysis of per-expert activation distributions for Qwen3 MoE (E8 vs E4). Candidate metrics for top_k selection: Gini, ΔEntropy, ffn_down Σ(Act²) ratio. Preliminary layer groupings for mixed top_k schedule. |
+| [per-layer-sensitivity-design.md](iccad/notes/per-layer-sensitivity-design.md) | Design doc: per-layer top_k sensitivity analysis via offline replay (save MLP inputs, replay with different top_k). Addresses distribution shift in pure E8/E4 comparison. |
 
 ### Results
 | Description | Date |
