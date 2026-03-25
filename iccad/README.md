@@ -32,6 +32,6 @@ iccad/
 |-------------|-------|------|
 | Qwen3 MoE imatrix statistics (E8, q8_0 calibration) | `qwen3-imatrix-q8_0-statistics-iccad.txt`, `expert_activation_counts.png` | 2026-03-17 |
 | Qwen3 MoE imatrix statistics (E4, q8_0 calibration) | `qwen3-imatrix-q8_0-E4-statistics-iccad.txt`, `expert_activation_counts_E4.png` | 2026-03-17 |
-| Router analysis vs ΔEntropy cross-comparison | [results/router-analysis-results.md](results/router-analysis-results.md) | 2026-03-23 |
+| Router analysis vs ΔEntropy cross-comparison (k=4 + k=6) | [results/router-analysis-results.md](results/router-analysis-results.md) | 2026-03-24 |
 
-> Result files live in the workspace root (`/home/user1/workspace/bobchenyx/26-ICCAD/`), not committed to the repo.
+> Model files live in `qwen3/` and `qwen35/`. Analysis scripts in `scripts/`. imatrix outputs at workspace root or in `qwen3/imatrix/`.
