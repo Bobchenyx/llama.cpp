@@ -29,14 +29,14 @@ The standard imatrix tool collects **squared input activation norms** (`Σ(x²)`
 
 During the same inference pass, when the callback detects a MoE router weight tensor (`ffn_gate_inp`), we additionally read the **output tensor** (router logits `[n_expert, n_tokens]`) and compute per-token routing statistics. This is zero-cost relative to the existing imatrix collection — it only requires one additional GPU→CPU copy of a small tensor (128 × n_tokens floats) per MoE layer.
 
-For each token, we compute softmax over all 128 expert logits, sort descending, then extract:
+For each token, we compute softmax over all 128 expert logits, sort descending, then extract metrics at **two boundaries** (k=4 and k=6, both compared against k=8):
 
-| Metric | Definition | What it tells us |
-|--------|-----------|-----------------|
-| Score margin | `prob[3] - prob[4]` | How confident the router is at the k=4 boundary. Large gap → the 5th expert is clearly less important → safe to cut. |
-| Weight concentration | `top4_sum / top8_sum` | How much of the top-8 weight is carried by the top-4. High → the bottom 4 contribute little → safe to cut. |
-| Max probability | max expert probability | Whether routing is dominated by a single expert. High → fewer experts needed. |
-| Routing entropy | `-Σ p·log₂(p)` over all experts | Overall spread of the routing distribution. Low → peaked → fewer experts needed. |
+| Metric | k=4 definition | k=6 definition | What it tells us |
+|--------|---------------|---------------|-----------------|
+| Score margin | `prob[3] - prob[4]` | `prob[5] - prob[6]` | How confident the router is at the boundary. Large gap → safe to cut. |
+| Weight concentration | `top4_sum / top8_sum` | `top6_sum / top8_sum` | How much of the top-8 weight is carried by the top-k. High → safe to cut. |
+| Max probability | max expert probability | (shared) | Whether routing is dominated by a single expert. High → fewer experts needed. |
+| Routing entropy | `-Σ p·log₂(p)` over all experts | (shared) | Overall spread of the routing distribution. Low → peaked → fewer experts needed. |
 
 ### How this relates to the earlier ΔEntropy analysis
 
@@ -233,22 +233,21 @@ The output tensor can be read from GPU using `ggml_backend_tensor_get()`, same p
 
 **Data structure** (`router_layer_stats`):
 - `n_tokens`: total tokens processed
-- `sum_score_margin`, `sum_score_margin_sq`: for mean/stddev of prob[3]-prob[4]
-- `sum_weight_conc`, `sum_weight_conc_sq`: for mean/stddev of top4/top8
-- `sum_max_prob`: mean of max expert probability
-- `sum_entropy`: mean per-token routing entropy (bits)
+- k=4 boundary: `sum_score_margin`, `sum_score_margin_sq`, `sum_weight_conc`, `sum_weight_conc_sq`
+- k=6 boundary: `sum_score_margin_k6`, `sum_score_margin_sq_k6`, `sum_weight_conc_k6`, `sum_weight_conc_sq_k6`
+- Shared: `sum_max_prob`, `sum_entropy`
 
 **Callback logic** (in the dense `GGML_OP_MUL_MAT` branch):
 1. Check if `wname` contains `"ffn_gate_inp"`
 2. Extract layer index via `process_tensor_name()`
 3. Copy output tensor `t` from GPU (`ggml_backend_tensor_get`)
-4. For each token: softmax over 128 logits → sort descending → compute metrics → accumulate
+4. For each token: softmax over 128 logits → sort descending → compute metrics at k=4 and k=6 boundaries → accumulate
 
-**Output**: summary table printed after inference with per-layer mean/std of all metrics. Also persisted to the imatrix GGUF file as a `imatrix.router_stats` tensor (shape `[8, n_layers]`, float32), so router analysis can be viewed later via `--show-statistics` without re-running inference.
+**Output**: summary table printed after inference with per-layer mean/std of all metrics at both boundaries. Also persisted to the imatrix GGUF file as a `imatrix.router_stats` tensor (shape `[12, n_layers]`, float32), so router analysis can be viewed later via `--show-statistics` without re-running inference. Backward compatible with v1 format (shape `[8, n_layers]`, k=4 only).
 
 **Interpretation guide**:
-- **Large score margin** → routing is confident at k=4 boundary → safe to reduce top_k
-- **High weight concentration** → top-4 experts carry most of the weight → safe to reduce
+- **Large score margin** → routing is confident at boundary → safe to reduce top_k
+- **High weight concentration** → top-k experts carry most of the weight → safe to reduce
 - **Low routing entropy** → routing is peaked → fewer experts needed
 - **High max probability** → one expert dominates → safe to reduce
 
@@ -258,5 +257,5 @@ The output tensor can be read from GPU using `ggml_backend_tensor_get()`, same p
 
 1. **What distance metric best captures "sensitivity"?** Cosine similarity of outputs? L2 norm of difference? Relative norm change? Need to experiment (Phase 1b).
 2. **How many tokens to sample for offline replay?** Saving all ~430K tokens per layer is ~1.68 GB/layer. A random 10K–50K subset may suffice.
-3. **Should we also test intermediate top_k values (e.g., 5, 6, 7)?** This would give a sensitivity curve per layer, not just a binary E8 vs E4 comparison.
+3. ~~**Should we also test intermediate top_k values (e.g., 5, 6, 7)?**~~ Addressed: k=6 boundary metrics now collected alongside k=4 in a single pass.
 4. **Does score margin correlate with perplexity impact?** This is the key validation question for Phase 1a. If yes, score margin is a cheap and reliable metric.

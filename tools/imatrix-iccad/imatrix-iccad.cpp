@@ -61,12 +61,20 @@ struct tensor_statistics {
 };
 
 // ICCAD: per-layer router analysis statistics (collected during inference)
+// Metrics are computed at two boundaries (k=4 and k=6), both compared against k=8.
 struct router_layer_stats {
     int64_t n_tokens = 0;
-    double sum_score_margin    = 0.0;  // prob[k-1] - prob[k] at k=4 boundary
+    // k=4 boundary
+    double sum_score_margin    = 0.0;  // prob[3] - prob[4]
     double sum_score_margin_sq = 0.0;
-    double sum_weight_conc     = 0.0;  // top-4 share of top-8 weight
+    double sum_weight_conc     = 0.0;  // top4_sum / top8_sum
     double sum_weight_conc_sq  = 0.0;
+    // k=6 boundary
+    double sum_score_margin_k6    = 0.0;  // prob[5] - prob[6]
+    double sum_score_margin_sq_k6 = 0.0;
+    double sum_weight_conc_k6     = 0.0;  // top6_sum / top8_sum
+    double sum_weight_conc_sq_k6  = 0.0;
+    // shared (independent of boundary)
     double sum_max_prob        = 0.0;  // max expert probability
     double sum_entropy         = 0.0;  // routing entropy (bits)
 };
@@ -473,14 +481,21 @@ bool IMatrixCollector::collect_imatrix(struct ggml_tensor * t, bool ask, void * 
                     std::sort(probs.begin(), probs.end(),
                               [](float a, float b) { return a > b; });
 
-                    // score margin at k=4 boundary (gap between 4th and 5th expert)
-                    const float score_margin = probs[3] - probs[4];
+                    // cumulative sums for top-k partial sums
+                    float top4 = 0.0f, top6 = 0.0f, top8 = 0.0f;
+                    for (int i = 0; i < 8; ++i) {
+                        top8 += probs[i];
+                        if (i < 4) top4 += probs[i];
+                        if (i < 6) top6 += probs[i];
+                    }
 
-                    // weight concentration: top-4 share of top-8 weight
-                    float top4 = 0.0f, top8 = 0.0f;
-                    for (int i = 0; i < 4; ++i) top4 += probs[i];
-                    for (int i = 0; i < 8; ++i) top8 += probs[i];
-                    const float weight_conc = (top8 > 0.0f) ? top4 / top8 : 1.0f;
+                    // score margins at k=4 and k=6 boundaries
+                    const float sm_k4 = probs[3] - probs[4];
+                    const float sm_k6 = probs[5] - probs[6];
+
+                    // weight concentrations: top-k share of top-8 weight
+                    const float wc_k4 = (top8 > 0.0f) ? top4 / top8 : 1.0f;
+                    const float wc_k6 = (top8 > 0.0f) ? top6 / top8 : 1.0f;
 
                     // per-token routing entropy (bits, over all experts)
                     float rent = 0.0f;
@@ -491,10 +506,17 @@ bool IMatrixCollector::collect_imatrix(struct ggml_tensor * t, bool ask, void * 
                     }
 
                     rs.n_tokens++;
-                    rs.sum_score_margin    += score_margin;
-                    rs.sum_score_margin_sq += (double) score_margin * score_margin;
-                    rs.sum_weight_conc     += weight_conc;
-                    rs.sum_weight_conc_sq  += (double) weight_conc * weight_conc;
+                    // k=4 boundary
+                    rs.sum_score_margin    += sm_k4;
+                    rs.sum_score_margin_sq += (double) sm_k4 * sm_k4;
+                    rs.sum_weight_conc     += wc_k4;
+                    rs.sum_weight_conc_sq  += (double) wc_k4 * wc_k4;
+                    // k=6 boundary
+                    rs.sum_score_margin_k6    += sm_k6;
+                    rs.sum_score_margin_sq_k6 += (double) sm_k6 * sm_k6;
+                    rs.sum_weight_conc_k6     += wc_k6;
+                    rs.sum_weight_conc_sq_k6  += (double) wc_k6 * wc_k6;
+                    // shared
                     rs.sum_max_prob        += probs[0];
                     rs.sum_entropy         += rent;
                 }
@@ -663,7 +685,7 @@ void IMatrixCollector::save_imatrix(int32_t n_chunk) const {
 
     // ICCAD: account for router stats tensor
     if (!m_router_stats.empty()) {
-        data_size += GGML_PAD(ggml_tensor_overhead() + sizeof(float) * 8 * m_router_stats.size(), GGML_MEM_ALIGN);
+        data_size += GGML_PAD(ggml_tensor_overhead() + sizeof(float) * 12 * m_router_stats.size(), GGML_MEM_ALIGN);
     }
 
     // deterministic tensor name order
@@ -717,23 +739,31 @@ void IMatrixCollector::save_imatrix(int32_t n_chunk) const {
         }
     }
 
-    // ICCAD: save router stats if available
+    // ICCAD: save router stats if available (v2: 12 fields per layer)
     if (!m_router_stats.empty()) {
         const int n_rl = (int) m_router_stats.size();
-        struct ggml_tensor * rt = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 8, n_rl);
+        const int n_fields = 12;
+        struct ggml_tensor * rt = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_fields, n_rl);
         ggml_set_name(rt, "imatrix.router_stats");
 
         float * rd = (float *) rt->data;
         int idx = 0;
         for (const auto & [layer, rs] : m_router_stats) {
-            rd[idx * 8 + 0] = (float) layer;
-            rd[idx * 8 + 1] = (float) rs.n_tokens;
-            rd[idx * 8 + 2] = (float) rs.sum_score_margin;
-            rd[idx * 8 + 3] = (float) rs.sum_score_margin_sq;
-            rd[idx * 8 + 4] = (float) rs.sum_weight_conc;
-            rd[idx * 8 + 5] = (float) rs.sum_weight_conc_sq;
-            rd[idx * 8 + 6] = (float) rs.sum_max_prob;
-            rd[idx * 8 + 7] = (float) rs.sum_entropy;
+            rd[idx * n_fields +  0] = (float) layer;
+            rd[idx * n_fields +  1] = (float) rs.n_tokens;
+            // k=4 boundary
+            rd[idx * n_fields +  2] = (float) rs.sum_score_margin;
+            rd[idx * n_fields +  3] = (float) rs.sum_score_margin_sq;
+            rd[idx * n_fields +  4] = (float) rs.sum_weight_conc;
+            rd[idx * n_fields +  5] = (float) rs.sum_weight_conc_sq;
+            // shared
+            rd[idx * n_fields +  6] = (float) rs.sum_max_prob;
+            rd[idx * n_fields +  7] = (float) rs.sum_entropy;
+            // k=6 boundary (new in v2)
+            rd[idx * n_fields +  8] = (float) rs.sum_score_margin_k6;
+            rd[idx * n_fields +  9] = (float) rs.sum_score_margin_sq_k6;
+            rd[idx * n_fields + 10] = (float) rs.sum_weight_conc_k6;
+            rd[idx * n_fields + 11] = (float) rs.sum_weight_conc_sq_k6;
             idx++;
         }
         gguf_add_tensor(ctx_gguf, rt);
@@ -964,21 +994,28 @@ bool IMatrixCollector::load_imatrix(const char * file_name) {
         m_last_chunk = (chunk_size > 0) ? max_count / chunk_size : 0;
     }
 
-    // ICCAD: load router stats if present
+    // ICCAD: load router stats if present (v1: ne[0]==8, v2: ne[0]==12)
     struct ggml_tensor * rt = ggml_get_tensor(ctx, "imatrix.router_stats");
-    if (rt && rt->ne[0] == 8 && rt->ne[1] > 0) {
-        const int n_rl = (int) rt->ne[1];
-        const float * rd = (const float *) rt->data;
+    if (rt && (rt->ne[0] == 8 || rt->ne[0] == 12) && rt->ne[1] > 0) {
+        const int n_rl     = (int) rt->ne[1];
+        const int n_fields = (int) rt->ne[0];
+        const float * rd   = (const float *) rt->data;
         for (int i = 0; i < n_rl; ++i) {
-            const int layer_idx = (int) rd[i * 8 + 0];
+            const int layer_idx = (int) rd[i * n_fields + 0];
             auto & rs = m_router_stats[layer_idx];
-            rs.n_tokens            += (int64_t) rd[i * 8 + 1];
-            rs.sum_score_margin    += (double)  rd[i * 8 + 2];
-            rs.sum_score_margin_sq += (double)  rd[i * 8 + 3];
-            rs.sum_weight_conc     += (double)  rd[i * 8 + 4];
-            rs.sum_weight_conc_sq  += (double)  rd[i * 8 + 5];
-            rs.sum_max_prob        += (double)  rd[i * 8 + 6];
-            rs.sum_entropy         += (double)  rd[i * 8 + 7];
+            rs.n_tokens            += (int64_t) rd[i * n_fields + 1];
+            rs.sum_score_margin    += (double)  rd[i * n_fields + 2];
+            rs.sum_score_margin_sq += (double)  rd[i * n_fields + 3];
+            rs.sum_weight_conc     += (double)  rd[i * n_fields + 4];
+            rs.sum_weight_conc_sq  += (double)  rd[i * n_fields + 5];
+            rs.sum_max_prob        += (double)  rd[i * n_fields + 6];
+            rs.sum_entropy         += (double)  rd[i * n_fields + 7];
+            if (n_fields >= 12) {
+                rs.sum_score_margin_k6    += (double) rd[i * n_fields +  8];
+                rs.sum_score_margin_sq_k6 += (double) rd[i * n_fields +  9];
+                rs.sum_weight_conc_k6     += (double) rd[i * n_fields + 10];
+                rs.sum_weight_conc_sq_k6  += (double) rd[i * n_fields + 11];
+            }
         }
     }
 
@@ -1402,27 +1439,40 @@ void IMatrixCollector::print_router_stats() const {
 
     LOG_INF("\n");
     LOG_INF("Router analysis — per-layer score margin and weight concentration (ICCAD)\n");
-    LOG_INF("  Score margin : prob[3] - prob[4]  (gap at k=4 boundary; larger = safer to reduce top_k)\n");
-    LOG_INF("  Weight conc  : top4_sum / top8_sum (fraction of top-8 weight in top-4; higher = safer)\n");
-    LOG_INF("  Max prob     : mean of max expert probability per token\n");
-    LOG_INF("  Rout entropy : mean per-token routing entropy in bits\n\n");
+    LOG_INF("  SM_k4 / SM_k6 : prob[3]-prob[4] / prob[5]-prob[6]  (gap at boundary; larger = safer to reduce)\n");
+    LOG_INF("  WC_k4 / WC_k6 : top4/top8 / top6/top8  (weight concentration; higher = safer)\n");
+    LOG_INF("  MaxProb        : mean of max expert probability per token\n");
+    LOG_INF("  RoutEntropy    : mean per-token routing entropy in bits\n\n");
 
-    LOG_INF("%6s\t%10s\t%11s\t%10s\t%10s\t%10s\t%11s\n",
-            "Layer", "Tokens", "ScoreMargin", "SM_Std", "WeightConc", "MaxProb", "RoutEntropy");
-    LOG_INF("------\t----------\t-----------\t----------\t----------\t----------\t-----------\n");
+    LOG_INF("%6s\t%10s\t%11s\t%10s\t%10s\t%11s\t%10s\t%10s\t%10s\t%11s\n",
+            "Layer", "Tokens",
+            "SM_k4", "SM_k4_Std", "WC_k4",
+            "SM_k6", "SM_k6_Std", "WC_k6",
+            "MaxProb", "RoutEntropy");
+    LOG_INF("------\t----------\t-----------\t----------\t----------\t-----------\t----------\t----------\t----------\t-----------\n");
 
     for (const auto & [layer, rs] : m_router_stats) {
         if (rs.n_tokens == 0) continue;
-        const double n      = (double) rs.n_tokens;
-        const double mean_sm  = rs.sum_score_margin / n;
-        const double var_sm   = (rs.sum_score_margin_sq / n) - (mean_sm * mean_sm);
-        const double std_sm   = std::sqrt(std::max(0.0, var_sm));
-        const double mean_wc  = rs.sum_weight_conc / n;
-        const double mean_mp  = rs.sum_max_prob / n;
-        const double mean_ent = rs.sum_entropy / n;
+        const double n = (double) rs.n_tokens;
+        // k=4
+        const double mean_sm4  = rs.sum_score_margin / n;
+        const double var_sm4   = (rs.sum_score_margin_sq / n) - (mean_sm4 * mean_sm4);
+        const double std_sm4   = std::sqrt(std::max(0.0, var_sm4));
+        const double mean_wc4  = rs.sum_weight_conc / n;
+        // k=6
+        const double mean_sm6  = rs.sum_score_margin_k6 / n;
+        const double var_sm6   = (rs.sum_score_margin_sq_k6 / n) - (mean_sm6 * mean_sm6);
+        const double std_sm6   = std::sqrt(std::max(0.0, var_sm6));
+        const double mean_wc6  = rs.sum_weight_conc_k6 / n;
+        // shared
+        const double mean_mp   = rs.sum_max_prob / n;
+        const double mean_ent  = rs.sum_entropy / n;
 
-        LOG_INF("%6d\t%10ld\t%11.6f\t%10.6f\t%10.6f\t%10.6f\t%11.4f\n",
-                layer, (long) rs.n_tokens, mean_sm, std_sm, mean_wc, mean_mp, mean_ent);
+        LOG_INF("%6d\t%10ld\t%11.6f\t%10.6f\t%10.6f\t%11.6f\t%10.6f\t%10.6f\t%10.6f\t%11.4f\n",
+                layer, (long) rs.n_tokens,
+                mean_sm4, std_sm4, mean_wc4,
+                mean_sm6, std_sm6, mean_wc6,
+                mean_mp, mean_ent);
     }
     LOG_INF("\n");
 }
