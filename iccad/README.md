@@ -30,8 +30,10 @@ iccad/
 
 | Description | Files | Date |
 |-------------|-------|------|
-| Qwen3 MoE imatrix statistics (E8, q8_0 calibration) | `qwen3-imatrix-q8_0-statistics-iccad.txt`, `expert_activation_counts.png` | 2026-03-17 |
-| Qwen3 MoE imatrix statistics (E4, q8_0 calibration) | `qwen3-imatrix-q8_0-E4-statistics-iccad.txt`, `expert_activation_counts_E4.png` | 2026-03-17 |
-| Router analysis vs ΔEntropy cross-comparison (k=4 + k=6) | [results/router-analysis-results.md](results/router-analysis-results.md) | 2026-03-24 |
+| Qwen3 MoE imatrix (E8, router v2 with k4+k6) | `qwen3-imatrix-q8_0-callback-864.txt` | 2026-03-24 |
+| Qwen3 MoE imatrix (E4, q8_0 calibration) | `qwen3-imatrix-q8_0-E4-statistics-iccad.txt` | 2026-03-17 |
+| Qwen3 router analysis vs ΔEntropy (k=4 + k=6) | [results/router-analysis-results.md](results/router-analysis-results.md) | 2026-03-24 |
+| Qwen3.5-35B router analysis + sensitivity ranking | [results/qwen35-router-analysis.md](results/qwen35-router-analysis.md), `qwen35-imatrix-q8_0-callback-864.txt` | 2026-03-24 |
+| Qwen3.5-122B router analysis + cross-scale comparison | [results/qwen35-122b-router-analysis.md](results/qwen35-122b-router-analysis.md), `qwen35-122B-imatrix-q8_0-callback-864.txt` | 2026-03-25 |
 
 > Model files live in `qwen3/` and `qwen35/`. Analysis scripts in `scripts/`. imatrix outputs at workspace root or in `qwen3/imatrix/`.
