@@ -9,6 +9,8 @@ This folder contains research notes, experiment results, and documentation for t
 
 Both techniques are developed and extended in `tools/imatrix-iccad/` (our working copy). `tools/imatrix/` is kept as a fixed bug-fixed upstream baseline. Target models: Qwen3 MoE and Qwen3.5 MoE series.
 
+3. **CKA-based layer importance**: `tools/imatrix-hsic/` captures per-layer hidden representations during calibration inference. Offline CKA (Centered Kernel Alignment) computation produces S_in(i) = CKA(X, H_i) and S_out(i) = CKA(H_i, H_L), yielding a per-layer importance metric M1 = S_out × (1 - S_in).
+
 ## Structure
 
 ```
@@ -35,5 +37,6 @@ iccad/
 | Qwen3 router analysis vs ΔEntropy (k=4 + k=6) | [results/router-analysis-results.md](results/router-analysis-results.md) | 2026-03-24 |
 | Qwen3.5-35B router analysis + sensitivity ranking | [results/qwen35-router-analysis.md](results/qwen35-router-analysis.md), `qwen35-imatrix-q8_0-callback-864.txt` | 2026-03-24 |
 | Qwen3.5-122B router analysis + cross-scale comparison | [results/qwen35-122b-router-analysis.md](results/qwen35-122b-router-analysis.md), `qwen35-122B-imatrix-q8_0-callback-864.txt` | 2026-03-25 |
+| Qwen3-30B CKA/HSIC layer representations (840 chunks) | Raw data in `qwen3/hsic/` (51 files, ~340 MB) | 2026-04-04 |
 
-> Model files live in `qwen3/` and `qwen35/`. Analysis scripts in `scripts/`. imatrix outputs at workspace root or in `qwen3/imatrix/`.
+> Model files live in `qwen3/` and `qwen35/`. Analysis scripts in `scripts/`. imatrix outputs at workspace root or in `qwen3/imatrix/`. HSIC probe data in `qwen3/hsic/`.
