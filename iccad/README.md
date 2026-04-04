@@ -39,5 +39,7 @@ iccad/
 | Qwen3.5-35B router analysis + sensitivity ranking | [results/qwen35-router-analysis.md](results/qwen35-router-analysis.md), `qwen35-imatrix-q8_0-callback-864.txt` | 2026-03-24 |
 | Qwen3.5-122B router analysis + cross-scale comparison | [results/qwen35-122b-router-analysis.md](results/qwen35-122b-router-analysis.md), `qwen35-122B-imatrix-q8_0-callback-864.txt` | 2026-03-25 |
 | Qwen3-30B CKA/HSIC layer representations (840 chunks) | Raw data in `qwen3/hsic/` (51 files, ~340 MB) | 2026-04-04 |
+| Qwen3-30B CKA layer importance analysis (ctx=512) | [results/qwen3-cka-analysis.txt](results/qwen3-cka-analysis.txt) | 2026-04-04 |
+| Qwen3-30B CKA context size comparison (ctx=256 vs 512) | [results/qwen3-cka-analysis-ctx256.txt](results/qwen3-cka-analysis-ctx256.txt), appended to ctx=512 results | 2026-04-04 |
 
 > Model files live in `qwen3/` and `qwen35/`. Analysis scripts in `scripts/`. imatrix outputs at workspace root or in `qwen3/imatrix/`. HSIC probe data in `qwen3/hsic/`.

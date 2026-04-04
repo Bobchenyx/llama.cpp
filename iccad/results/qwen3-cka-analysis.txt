@@ -84,3 +84,27 @@ Metric Correlations (Spearman rho, layers 0-46)
   M1 vs M2: rho = 0.886
   M1 vs M3: rho = 0.663
   M2 vs M3: rho = 0.421
+
+==========================================================================================
+Context Size Sensitivity: ctx=512 (840 chunks) vs ctx=256 (1681 chunks)
+==========================================================================================
+Cross-ctx Spearman correlation (layers 0-46):
+  S_in:  rho = 0.908
+  S_out: rho = 0.947
+  M1:    rho = 0.972
+
+Max absolute difference:
+  S_in:  0.269  (layer 2)
+  S_out: 0.077  (layer 2)
+  M1:    0.023  (layer 1)
+
+M1 ranking comparison (top/bottom 12):
+  ctx=512 top 12:    [46, 45, 37, 44, 42, 43, 12, 10, 39, 8, 6, 3]
+  ctx=256 top 12:    [46, 45, 37, 44, 42, 43, 12, 39, 10, 11, 6, 8]
+  ctx=512 bottom 12: [26, 33, 28, 5, 19, 21, 9, 32, 0, 31, 38, 34]
+  ctx=256 bottom 12: [26, 33, 28, 19, 5, 21, 31, 9, 0, 7, 32, 38]
+  Top-12 overlap:    11/12
+  Bottom-12 overlap: 11/12
+
+Conclusion: CKA layer importance is robust to context size. ctx=512 results are used
+as the primary reference.
