@@ -17,7 +17,8 @@ Both techniques are developed and extended in `tools/imatrix-iccad/` (our workin
 iccad/
 ├── README.md       - this file (index of all documents)
 ├── notes/          - reading notes, code understanding, and ideas
-└── results/        - experiment outputs, perplexity scores, imatrix stats
+├── results/        - experiment outputs, perplexity scores, imatrix stats
+└── scripts/        - analysis scripts (CKA computation, etc.)
 ```
 
 ## Notes Index
