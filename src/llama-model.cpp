@@ -1015,6 +1015,36 @@ void llama_model_base::load_hparams(llama_model_loader & ml) {
         }
     }
 
+    // ICCAD: initialize per-layer expert_used array from global default
+    for (uint32_t i = 0; i < hparams.n_layer; ++i) {
+        hparams.n_expert_used_arr[i] = hparams.n_expert_used;
+    }
+
+    // ICCAD: load per-layer expert schedule if provided via --override-kv expert_schedule=str:<path>
+    {
+        std::string sched_path;
+        if (ml.get_key("expert_schedule", sched_path, false)) {
+            FILE * fp = fopen(sched_path.c_str(), "r");
+            if (fp) {
+                int layer, k;
+                while (fscanf(fp, "%d %d", &layer, &k) == 2) {
+                    if (layer >= 0 && layer < (int)hparams.n_layer) {
+                        hparams.n_expert_used_arr[layer] = k;
+                    }
+                }
+                fclose(fp);
+                for (uint32_t i = 0; i < hparams.n_layer; ++i) {
+                    if (hparams.n_expert_used_arr[i] != hparams.n_expert_used) {
+                        LLAMA_LOG_INFO("%s: layer %d expert_used override: %d -> %d\n",
+                            __func__, i, hparams.n_expert_used, hparams.n_expert_used_arr[i]);
+                    }
+                }
+            } else {
+                LLAMA_LOG_ERROR("%s: failed to open expert schedule: %s\n", __func__, sched_path.c_str());
+            }
+        }
+    }
+
     if (arch == LLM_ARCH_WAVTOKENIZER_DEC) {
         ml.get_key(LLM_KV_FEATURES_LENGTH,  hparams.n_embd);
         ml.get_key(LLM_KV_EMBEDDING_LENGTH, hparams.n_embd_out_impl);

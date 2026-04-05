@@ -177,6 +177,7 @@ All research documents live in `iccad/`. See [iccad/README.md](iccad/README.md) 
 | Phase 1a router analysis implemented in imatrix-iccad: score margin, weight concentration, max prob, routing entropy | 2026-03-23 |
 | Router analysis vs ΔEntropy cross-comparison: SM and DE are uncorrelated (ρ=-0.07); combined ranking yields 12-layer E8 schedule | 2026-03-23 |
 | CKA/HSIC probe tool (`llama-imatrix-hsic`) created; Qwen3-30B full run (840 chunks) collected | 2026-04-04 |
+| Per-layer top_k PPL validation: CKA M1/M2 top-12 kept → PPL 7.99 vs 8.23 (bottom-12) vs 8.62 (all k=4) | 2026-04-04 |
 
 ## Adding a New Model
 

@@ -41,5 +41,6 @@ iccad/
 | Qwen3-30B CKA/HSIC layer representations (840 chunks) | Raw data in `qwen3/hsic/` (51 files, ~340 MB) | 2026-04-04 |
 | Qwen3-30B CKA layer importance analysis (ctx=512) | [results/qwen3-cka-analysis.txt](results/qwen3-cka-analysis.txt) | 2026-04-04 |
 | Qwen3-30B CKA context size comparison (ctx=256 vs 512) | [results/qwen3-cka-analysis-ctx256.txt](results/qwen3-cka-analysis-ctx256.txt), appended to ctx=512 results | 2026-04-04 |
+| Qwen3-30B per-layer top_k PPL validation (CKA-guided) | [results/ppl-perlayer-topk.md](results/ppl-perlayer-topk.md) | 2026-04-04 |
 
 > Model files live in `qwen3/` and `qwen35/`. Analysis scripts in `scripts/`. imatrix outputs at workspace root or in `qwen3/imatrix/`. HSIC probe data in `qwen3/hsic/`.

@@ -46,6 +46,7 @@ struct llama_hparams {
     int32_t n_layer_kv_from_start = -1; // if non-negative, the first n_layer_kv_from_start layers have KV cache
     uint32_t n_expert = 0;
     uint32_t n_expert_used = 0;
+    std::array<uint32_t, LLAMA_MAX_LAYERS> n_expert_used_arr = {};
     uint32_t n_rel_attn_bkts = 0;
 
     // different head size for full_attention and SWA layers
