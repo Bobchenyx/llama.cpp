@@ -1,7 +1,7 @@
 # Per-Layer top_k Sensitivity Analysis — Design Document
 
 **Date**: 2026-03-23
-**Status**: Phase 1a implemented (router-level analysis in callback)
+**Status**: Phase 2 complete (per-layer top_k validated via PPL). See [results/ppl-perlayer-topk.md](../results/ppl-perlayer-topk.md).
 
 ---
 
@@ -221,9 +221,10 @@ The output tensor can be read from GPU using `ggml_backend_tensor_get()`, same p
 - Measure actual output difference (cosine similarity, L2, relative norm).
 - Only pursue if Phase 1a router metrics are insufficient.
 
-**Phase 2**: Per-layer inference validation (Approach B).
-- Run perplexity experiments only for the most interesting layers identified by Phase 1.
-- Validates whether router-level or offline-replay sensitivity correlates with actual perplexity impact.
+**Phase 2** (done): Per-layer inference validation (Approach B).
+- Implemented per-layer `n_expert_used` schedule in llama.cpp (3 source files + 1 bug fix).
+- CKA M1 ranking validated: keeping M1 top-12 at k=8 gives PPL 7.99 vs 8.23 (bottom-12) vs 8.62 (all k=4).
+- Full results and code modification details: [results/ppl-perlayer-topk.md](../results/ppl-perlayer-topk.md).
 
 ---
 
