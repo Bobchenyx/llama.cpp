@@ -506,7 +506,7 @@ ggml_tensor * llama_model_qwen35moe::graph::build_layer_ffn(ggml_tensor * cur, c
             model.layers[il].ffn_gate_exps,
             model.layers[il].ffn_down_exps,
             nullptr,
-            n_expert, n_expert_used,
+            n_expert, cparams.warmup ? n_expert_used : (int64_t)hparams.n_expert_used_arr[il],
             LLM_FFN_SILU, true,
             hparams.expert_weights_scale,
             LLAMA_EXPERT_GATING_FUNC_TYPE_SOFTMAX, il,
