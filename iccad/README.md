@@ -45,5 +45,6 @@ iccad/
 | Qwen3.5-35B CKA/HSIC layer representations (829 chunks) | Raw data in `qwen35/hsic/` (42 files) | 2026-04-05 |
 | Qwen3.5-35B CKA layer importance analysis (ctx=512) | [results/qwen35-cka-analysis.txt](results/qwen35-cka-analysis.txt) | 2026-04-05 |
 | Qwen3.5-35B per-layer top_k PPL validation (CKA-guided) | [results/qwen35-ppl-perlayer-topk.md](results/qwen35-ppl-perlayer-topk.md) | 2026-04-05 |
+| CKA methodology audit: bootstrap stability + token-level CKA | [results/cka-audit.md](results/cka-audit.md), `qwen3/cka-bootstrap.txt`, `qwen35/cka-bootstrap.txt` | 2026-04-07 |
 
 > Model files live in `qwen3/` and `qwen35/`. Analysis scripts in `scripts/`. imatrix outputs at workspace root or in `qwen3/imatrix/`. HSIC probe data in `qwen3/hsic/` and `qwen35/hsic/`.

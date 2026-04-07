@@ -13,6 +13,7 @@ Metrics:
 Usage:
     python3 compute_cka.py qwen3/hsic/qwen3-hsic-q8_0
     python3 compute_cka.py qwen3/hsic/qwen3-hsic-q8_0 -o results.txt
+    python3 compute_cka.py qwen3/hsic/qwen3-hsic-q8_0 --bootstrap 1000
 """
 
 import argparse
@@ -24,12 +25,27 @@ from scipy.stats import spearmanr
 
 
 def linear_CKA(X: np.ndarray, Y: np.ndarray) -> float:
-    """CKA with linear kernel. X, Y: [n_samples, n_features]."""
+    """CKA with linear kernel. X, Y: [n_samples, n_features].
+
+    When n_samples < n_features, uses kernel-space formulation:
+      K = X_c @ X_c.T, L = Y_c @ Y_c.T  (both [n, n])
+      CKA = <K, L>_F / sqrt(<K, K>_F * <L, L>_F)
+    which avoids computing [p, p] feature-space matrices.
+    """
+    n, p = X.shape
     X = X - X.mean(axis=0)
     Y = Y - Y.mean(axis=0)
-    hsic_xy = np.linalg.norm(Y.T @ X, "fro") ** 2
-    hsic_xx = np.linalg.norm(X.T @ X, "fro") ** 2
-    hsic_yy = np.linalg.norm(Y.T @ Y, "fro") ** 2
+    if n < p:
+        # Kernel space: [n, n] matrices instead of [p, p]
+        K = X @ X.T
+        L = Y @ Y.T
+        hsic_xy = np.sum(K * L)
+        hsic_xx = np.sum(K * K)
+        hsic_yy = np.sum(L * L)
+    else:
+        hsic_xy = np.linalg.norm(Y.T @ X, "fro") ** 2
+        hsic_xx = np.linalg.norm(X.T @ X, "fro") ** 2
+        hsic_yy = np.linalg.norm(Y.T @ Y, "fro") ** 2
     return float(hsic_xy / np.sqrt(hsic_xx * hsic_yy))
 
 
@@ -45,6 +61,8 @@ def main():
     parser = argparse.ArgumentParser(description="Compute CKA layer importance")
     parser.add_argument("prefix", help="Output prefix from llama-imatrix-hsic")
     parser.add_argument("-o", "--output", help="Write results to file (default: stdout only)")
+    parser.add_argument("--bootstrap", type=int, default=0, metavar="N",
+                        help="Run N bootstrap resamples to assess M1 ranking stability")
     args = parser.parse_args()
 
     meta_path = f"{args.prefix}_meta.json"
@@ -146,6 +164,68 @@ def main():
         for j in range(i + 1, len(names)):
             rho, _ = spearmanr(metrics[names[i]], metrics[names[j]])
             lines.append(f"  {names[i]} vs {names[j]}: rho = {rho:.3f}")
+
+    # Bootstrap analysis
+    if args.bootstrap > 0:
+        # Load all layer data into memory for resampling
+        all_H = []
+        for il in range(n_l):
+            all_H.append(np.fromfile(f"{args.prefix}_layer_{il:02d}.bin", dtype=np.float32).reshape(n_c, n_e))
+
+        rng = np.random.default_rng(42)
+        n_boot = args.bootstrap
+        n_sub = int(n_c * 0.8)
+        boot_m1 = np.zeros((n_boot, n_l))
+
+        for b in range(n_boot):
+            idx = rng.choice(n_c, size=n_sub, replace=True)
+            Xb, HLb = X[idx], HL[idx]
+            for il in range(n_l):
+                Hb = all_H[il][idx]
+                si = linear_CKA(Xb, Hb)
+                so = linear_CKA(Hb, HLb)
+                boot_m1[b, il] = so * (1.0 - si)
+
+        # Rank each bootstrap sample (exclude last layer)
+        n_rank = len(rank_layers)
+        boot_ranks = np.zeros((n_boot, n_rank), dtype=int)
+        for b in range(n_boot):
+            order = np.argsort(-boot_m1[b, rank_layers])
+            for r, idx in enumerate(order):
+                boot_ranks[b, idx] = r + 1
+
+        lines.append("")
+        lines.append("=" * 90)
+        lines.append(f"Bootstrap Analysis ({n_boot} resamples, 80% chunks each)")
+        lines.append("=" * 90)
+        lines.append(f"{'L':>3} | {'M1 mean':>8} {'± std':>8} | {'med rank':>8} {'rank std':>8} | top-{n_show} freq")
+        lines.append("-" * 90)
+
+        # How often each layer appears in top-N
+        n_top = n_show  # same as display count (12 for Qwen3, 10 for Qwen3.5)
+        for ri, il in enumerate(rank_layers):
+            m1_mean = boot_m1[:, il].mean()
+            m1_std = boot_m1[:, il].std()
+            rank_med = np.median(boot_ranks[:, ri])
+            rank_std = boot_ranks[:, ri].std()
+            top_freq = (boot_ranks[:, ri] <= n_top).sum() / n_boot * 100
+            lines.append(f"{il:>3} | {m1_mean:>8.4f} {m1_std:>8.4f} | {rank_med:>8.1f} {rank_std:>8.2f} | {top_freq:>6.1f}%")
+
+        # Top-N stability summary
+        orig_topN = [rank_layers[int(x)] for x in np.argsort(-m1[rank_layers])[:n_top]]
+        lines.append("")
+        lines.append(f"Original top-{n_top} layers: {orig_topN}")
+        # Count how often the exact original set appears
+        orig_set = set(orig_topN)
+        exact_match = 0
+        overlap_counts = []
+        for b in range(n_boot):
+            boot_topN = set(rank_layers[int(x)] for x in np.argsort(-boot_m1[b, rank_layers])[:n_top])
+            overlap_counts.append(len(orig_set & boot_topN))
+            if boot_topN == orig_set:
+                exact_match += 1
+        lines.append(f"Exact match freq: {exact_match/n_boot*100:.1f}%")
+        lines.append(f"Mean overlap with original: {np.mean(overlap_counts):.1f}/{n_top}")
 
     text = "\n".join(lines) + "\n"
 

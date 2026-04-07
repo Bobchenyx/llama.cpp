@@ -179,6 +179,7 @@ All research documents live in `iccad/`. See [iccad/README.md](iccad/README.md) 
 | CKA/HSIC probe tool (`llama-imatrix-hsic`) created; Qwen3-30B full run (840 chunks) collected | 2026-04-04 |
 | Per-layer top_k PPL validation: CKA M1/M2 top-12 kept → PPL 7.99 vs 8.23 (bottom-12) vs 8.62 (all k=4) | 2026-04-04 |
 | Qwen3.5-35B CKA layer importance + per-layer top_k PPL validation: M1 top-10 → PPL 7.11 vs 7.35 (bottom-10) vs 7.58 (all k=4). CKA M1 generalizes across architectures. | 2026-04-05 |
+| CKA methodology audit: bootstrap ranking stability (200 resamples) + token-level vs chunk-averaged CKA comparison. Token-level ρ=0.60/0.64 vs chunk-averaged; top-12 overlap 58%/67%. Layer 46 (Qwen3) is a chunk-averaging artifact. | 2026-04-07 |
 
 ## Adding a New Model
 
