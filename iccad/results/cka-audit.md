@@ -170,11 +170,12 @@ captures the full variance landscape.
    chunk-level importance reflects inter-document variation, not per-token processing.
    This is the single largest discrepancy.
 
-5. **Practical impact on PPL validation.** Our PPL experiments used the chunk-averaged
-   M1 top-12, which included layer 46 and excluded layers like 40, 34, 38, 41. The
-   token-level ranking suggests a different schedule might perform better. However,
-   the chunk-averaged schedule still outperformed uniform and bottom-12, so CKA-guided
-   selection is directionally correct even with the averaging approximation.
+5. **Token-level CKA produces better PPL.** PPL validation confirms token-level M1 rankings
+   outperform chunk-averaged rankings on both models:
+   - Qwen3-30B: token-level 7.94 vs chunk-averaged 7.99 (ΔPPL = -0.054)
+   - Qwen3.5-35B: token-level 7.08 vs chunk-averaged 7.11 (ΔPPL = -0.026)
+   The improvement is consistent but small — both methods are valid options. Token-level
+   is recommended when compute budget allows (~75 min vs ~15 min per model).
 
 6. **Recommendation.** For future experiments, prefer token-level CKA (streaming mode)
    as the primary ranking. Use chunk-averaged CKA as a fast approximation for initial
