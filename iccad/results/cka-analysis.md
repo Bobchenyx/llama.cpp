@@ -95,6 +95,73 @@ Token-level is consistently better, but both are valid options.
 
 ---
 
+## Large Model CKA Rankings (chunk-averaged)
+
+### Qwen3.5-122B (48 layers, n_embd=3072, 829 chunks)
+
+```
+M1 top-12: [42, 43, 44, 39, 40, 46, 45, 38, 37, 35, 31, 36]
+   bot-12: [16, 20, 28, 9, 4, 14, 12, 27, 3, 7, 22, 8]
+```
+
+M1 range: [0.066, 0.195]. Top layers concentrated in deep region (31-46).
+S_in range: [0.13, 0.68], S_out range: [0.08, 0.48].
+M1 vs M2 ρ = 0.801, M1 vs M3 ρ = 0.098 (M3 poorly correlated).
+
+### Qwen3-235B (94 layers, n_embd=4096, 840 chunks)
+
+```
+M1 top-12: [91, 92, 85, 90, 23, 25, 7, 0, 27, 87, 89, 21]
+   bot-12: [3, 2, 70, 73, 68, 67, 71, 12, 63, 69, 74, 32]
+```
+
+M1 range: [0.012, 0.247]. **Bimodal distribution**: deep layers (85-92) and early
+layers (0, 7, 21-27) both in top-12. Middle layers (60-75) are consistently unimportant.
+S_in range: [0.04, 0.80], S_out range: [0.01, 0.67].
+M1 vs M2 ρ = 0.961, M1 vs M3 ρ = 0.580.
+
+### Cross-Scale Consistency
+
+| Model | Layers | Top-12 depth profile |
+|-------|--------|---------------------|
+| Qwen3-30B | 48 | Deep (37-46) + scattered early (3, 6, 8, 10, 12) |
+| Qwen3-235B | 94 | Deep (85-92) + early (0, 7, 21-27) — bimodal |
+| Qwen3.5-35B | 40 | Deep (33-38) + mid (19, 23, 25, 26) |
+| Qwen3.5-122B | 48 | Deep (35-46) — concentrated in final 1/3 |
+
+---
+
+## Probe Point Comparison: ffn_moe_out vs l_out
+
+Investigated whether probing full layer output (`l_out`/`post_moe`, including attention +
+residual + shared expert) gives different CKA rankings vs `ffn_moe_out` (pure MoE expert
+weighted output). Tested on 30B and 35B using `--probe-l-out` flag.
+
+### Results
+
+| | ffn_moe_out M1 top-12 | l_out M1 top-12 | Overlap |
+|---|---|---|---|
+| Qwen3-30B | [46,45,37,44,42,43,12,10,39,8,6,3] | [46,45,44,43,42,40,41,18,31,19,32,20] | 5/12 (42%) |
+| Qwen3.5-35B | [38,37,35,34,36,19,26,23,9,25,21,33] | [26,27,24,25,22,18,23,30,29,28,21,20] | 4/12 (33%) |
+
+### Why l_out is depth-confounded
+
+l_out includes the full residual stream, which accumulates information from all prior layers.
+
+| | ffn_moe_out S_in range | l_out S_in range | l_out M1 vs M3 ρ |
+|---|---|---|---|
+| Qwen3-30B | [0.04, 0.80] (wide) | [0.66, 0.85] (narrow) | **0.998** |
+| Qwen3.5-35B | [0.02, 0.76] (wide) | [0.50, 0.86] (narrow) | **0.983** |
+
+With l_out, S_in is near-constant (residual always carries most info), so M1 ≈ S_out,
+which monotonically increases with depth. The rankings become trivially depth-ordered.
+
+**Conclusion**: `ffn_moe_out` is the correct probe point for top_k scheduling — it
+isolates the MoE contribution to information flow, producing non-trivial rankings that
+identify genuinely important layers regardless of depth.
+
+---
+
 ## Conclusions
 
 1. **CKA implementation correct.** Python and C++ match the standard linear CKA formula.
@@ -108,14 +175,37 @@ Token-level is consistently better, but both are valid options.
 5. **Token-level PPL is slightly better** (ΔPPL = -0.03 to -0.05). Both methods valid;
    token-level recommended when compute allows.
 
+6. **CKA scales to large models.** 122B and 235B chunk-averaged CKA rankings validate
+   at PPL level (CKA < uniform < bottom < all-k4 ordering holds).
+
+7. **235B shows bimodal importance**: both early (0, 7, 21-27) and deep (85-92) layers
+   are critical — middle layers (60-75) can be aggressively pruned.
+
+8. **ffn_moe_out is the correct probe point.** l_out rankings are trivially depth-ordered
+   (M1 vs M3 ρ > 0.98) due to residual stream accumulation.
+
 ---
 
 ## Files
 
 | File | Description |
 |------|-------------|
-| `tools/imatrix-hsic/imatrix-hsic.cpp` | StreamingCKA mode (`--streaming-cka`) |
+| `tools/imatrix-hsic/imatrix-hsic.cpp` | CKA probe: `--streaming-cka`, `--probe-l-out` flags |
 | `tools/imatrix-hsic/CMakeLists.txt` | OpenMP linkage |
 | `iccad/scripts/compute_cka.py` | Bootstrap (`--bootstrap N`), kernel-space optimization |
-| `qwen3/cka-bootstrap.txt` | Qwen3 bootstrap results (200 resamples) |
-| `qwen35/cka-bootstrap.txt` | Qwen3.5 bootstrap results (200 resamples) |
+| `qwen3/cka-bootstrap.txt` | Qwen3-30B bootstrap results (200 resamples) |
+| `qwen35/cka-bootstrap.txt` | Qwen3.5-35B bootstrap results (200 resamples) |
+
+CKA probe data (chunk-averaged, ffn_moe_out):
+
+| Directory | Model | Chunks |
+|-----------|-------|--------|
+| `data/qwen3-235b-hsic/` | Qwen3-235B | 840 |
+| `data/qwen35-122b-hsic/` | Qwen3.5-122B | 829 |
+
+Probe point comparison data (chunk-averaged, l_out/post_moe):
+
+| Directory | Model | Chunks |
+|-----------|-------|--------|
+| `data/qwen3-30b-hsic-lout/` | Qwen3-30B | 840 |
+| `data/qwen35-35b-hsic-lout/` | Qwen3.5-35B | 829 |

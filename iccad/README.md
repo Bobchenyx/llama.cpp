@@ -13,14 +13,14 @@ Target models: Qwen3 MoE and Qwen3.5 MoE series.
 | File | Content |
 |------|---------|
 | [notes/imatrix-code-analysis.md](notes/imatrix-code-analysis.md) | imatrix tool internals, bug fixes, ICCAD extensions (per-expert counts, router analysis) |
-| [results/ppl-perlayer-topk.md](results/ppl-perlayer-topk.md) | Per-layer top_k PPL validation for Qwen3-30B and Qwen3.5-35B. CKA M1 rankings + code modifications |
-| [results/cka-analysis.md](results/cka-analysis.md) | CKA methodology: bootstrap stability, token-level vs chunk-averaged comparison, PPL validation |
+| [results/ppl-perlayer-topk.md](results/ppl-perlayer-topk.md) | Per-layer top_k PPL validation for all 4 models (30B, 35B, 122B, 235B). CKA M1 rankings + code modifications |
+| [results/cka-analysis.md](results/cka-analysis.md) | CKA methodology: bootstrap, token vs chunk, probe point comparison, large model results |
 | [results/router-analysis.md](results/router-analysis.md) | Router metrics (score margin, weight concentration) for Qwen3-30B, Qwen3.5-35B, Qwen3.5-122B |
 
 ## Data
 
-- Model files: `qwen3/`, `qwen35/`
-- CKA probe data: `qwen3/hsic/`, `qwen35/hsic/`
-- imatrix outputs: `qwen3/imatrix/`, workspace root `.txt` files
-- Schedule files: `iccad/schedules/`, `iccad/schedules/qwen35/`
+- Model files: `model/qwen3/`, `model/qwen35/`
+- CKA probe data: `data/qwen3-235b-hsic/`, `data/qwen35-122b-hsic/`, `data/qwen3-30b-hsic-lout/`, `data/qwen35-35b-hsic-lout/`
+- imatrix outputs: `iccad/results/` (`.txt` files)
+- Schedule files: `iccad/schedules/`, `iccad/schedules/qwen35/`, `iccad/schedules/qwen35-122b/`, `iccad/schedules/qwen3-235b/`
 - Analysis scripts: `iccad/scripts/`

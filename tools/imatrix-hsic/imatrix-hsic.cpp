@@ -391,6 +391,7 @@ struct StreamingCKA {
 
 static StreamingCKA g_streaming;
 static bool g_use_streaming = false;
+static bool g_probe_l_out   = false;
 
 // ------------------------------------------------------------------------------------------------
 // Eval callback: intercept named tensors during inference
@@ -404,7 +405,12 @@ static bool hsic_callback(struct ggml_tensor * t, bool ask, void * user_data) {
     if (ask) {
         if (strcmp(name, "embd") == 0)              return true;
         if (strcmp(name, "model.input_embed") == 0)  return true;
-        if (strncmp(name, "ffn_moe_out-", 12) == 0) return true;
+        if (g_probe_l_out) {
+            if (strncmp(name, "l_out-", 6) == 0)    return true;  // qwen3moe, most models
+            if (strncmp(name, "post_moe-", 9) == 0)  return true;  // qwen35moe
+        } else {
+            if (strncmp(name, "ffn_moe_out-", 12) == 0) return true;
+        }
         return false;
     }
 
@@ -434,8 +440,9 @@ static bool hsic_callback(struct ggml_tensor * t, bool ask, void * user_data) {
                    ptr, n_tokens * n_embd * sizeof(float));
             g_streaming.chunk_tokens = base + (int)n_tokens;
         }
-        else if (strncmp(name, "ffn_moe_out-", 12) == 0) {
-            const int il = atoi(name + 12);
+        else if ((!g_probe_l_out && strncmp(name, "ffn_moe_out-", 12) == 0) ||
+                 ( g_probe_l_out && (strncmp(name, "l_out-", 6) == 0 || strncmp(name, "post_moe-", 9) == 0))) {
+            const int il = atoi(strrchr(name, '-') + 1);
             if (il >= 0 && il < g_streaming.n_layers) {
                 // Layer callbacks write at offset 0 for this batch
                 // (embed already advanced chunk_tokens; layers see the same tokens)
@@ -456,8 +463,9 @@ static bool hsic_callback(struct ggml_tensor * t, bool ask, void * user_data) {
             }
             g_collector.embed_count += (int32_t)n_tokens;
         }
-        else if (strncmp(name, "ffn_moe_out-", 12) == 0) {
-            const int layer_idx = atoi(name + 12);
+        else if ((!g_probe_l_out && strncmp(name, "ffn_moe_out-", 12) == 0) ||
+                 ( g_probe_l_out && (strncmp(name, "l_out-", 6) == 0 || strncmp(name, "post_moe-", 9) == 0))) {
+            const int layer_idx = atoi(strrchr(name, '-') + 1);
             if (layer_idx >= 0 && layer_idx < g_collector.n_layers) {
                 for (int64_t tok = 0; tok < n_tokens; ++tok) {
                     const float * row = ptr + tok * n_embd;
@@ -582,11 +590,15 @@ int main(int argc, char ** argv) {
     params.n_ctx    = 512;
     params.escape   = false;
 
-    // Check for --streaming-cka before common_params_parse (which doesn't know it)
+    // Check for custom flags before common_params_parse (which doesn't know them)
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "--streaming-cka") == 0) {
             g_use_streaming = true;
-            // Remove from argv so common_params_parse doesn't complain
+            for (int j = i; j < argc - 1; ++j) argv[j] = argv[j + 1];
+            --argc;
+            --i;
+        } else if (strcmp(argv[i], "--probe-l-out") == 0) {
+            g_probe_l_out = true;
             for (int j = i; j < argc - 1; ++j) argv[j] = argv[j + 1];
             --argc;
             --i;
@@ -636,6 +648,7 @@ int main(int argc, char ** argv) {
     const int32_t n_embd   = llama_model_n_embd(model);
 
     LOG_INF("%s: model has %d layers, n_embd=%d\n", __func__, n_layers, n_embd);
+    LOG_INF("%s: probe target: %s\n", __func__, g_probe_l_out ? "l_out (full layer output)" : "ffn_moe_out (MoE FFN output)");
 
     if (g_use_streaming) {
         LOG_INF("%s: streaming CKA mode — accumulating token-level covariance matrices\n", __func__);
